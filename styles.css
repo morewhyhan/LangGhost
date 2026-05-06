@@ -1,0 +1,198 @@
+/* LangGhost Styles */
+
+/* Wave underlines */
+.langghost-grammar {
+  text-decoration: wavy underline red;
+  text-underline-offset: 3px;
+}
+
+.langghost-spelling {
+  text-decoration: wavy underline blue;
+  text-underline-offset: 3px;
+}
+
+.langghost-expression {
+  text-decoration: wavy underline #d4a017;
+  text-underline-offset: 3px;
+}
+
+.langghost-translation {
+  text-decoration: wavy underline green;
+  text-underline-offset: 3px;
+}
+
+/* Tooltip */
+.langghost-tooltip {
+  padding: 8px 12px;
+  font-size: 13px;
+  max-width: 320px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.langghost-fix {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-normal);
+}
+
+.langghost-alt {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.langghost-explain {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.langghost-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.langghost-actions button {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.langghost-actions button:hover {
+  background: var(--background-modifier-hover);
+}
+
+.langghost-actions .langghost-apply {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* Sidebar */
+.langghost-sidebar {
+  padding: 8px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.langghost-sidebar-empty {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px 0;
+}
+
+.langghost-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.langghost-sidebar-item {
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.langghost-sidebar-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.langghost-sidebar-fix {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.langghost-sidebar-original {
+  color: var(--text-error);
+  text-decoration: line-through;
+}
+
+.langghost-sidebar-arrow {
+  color: var(--text-muted);
+}
+
+.langghost-sidebar-corrected {
+  color: var(--text-success);
+  font-weight: 600;
+}
+
+.langghost-sidebar-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.langghost-sidebar-type {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.langghost-sidebar-type-grammar {
+  background: rgba(255, 0, 0, 0.12);
+  color: #e55;
+}
+
+.langghost-sidebar-type-spelling {
+  background: rgba(0, 100, 255, 0.12);
+  color: #68f;
+}
+
+.langghost-sidebar-type-expression {
+  background: rgba(212, 160, 23, 0.12);
+  color: #c90;
+}
+
+.langghost-sidebar-type-translation {
+  background: rgba(0, 180, 0, 0.12);
+  color: #4a4;
+}
+
+.langghost-sidebar-explain {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.langghost-sidebar-alt {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.langghost-sidebar-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.langghost-sidebar-actions button {
+  padding: 2px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.langghost-sidebar-actions button:hover {
+  background: var(--background-modifier-hover);
+}
+
+.langghost-sidebar-actions .langghost-sidebar-apply {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}

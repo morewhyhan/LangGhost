@@ -1,0 +1,22 @@
+{
+  "name": "langghost",
+  "version": "0.1.0",
+  "description": "English writing assistant for Obsidian - AI grammar checking with local + cloud dual-layer",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "keywords": ["obsidian", "grammar", "english", "writing"],
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.25.3",
+    "obsidian": "^1.8.7",
+    "tslib": "^2.8.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "harper.js": "^0.44.0"
+  }
+}
