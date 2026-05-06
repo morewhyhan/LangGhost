@@ -1,0 +1,9 @@
+{
+  "id": "langghost",
+  "name": "LangGhost",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "English writing assistant - local grammar checking + AI expression suggestions",
+  "author": "LangGhost",
+  "isDesktopOnly": true
+}
