@@ -1,11 +1,20 @@
 import type { ErrorItem, LangGhostSettings, AICorrection } from './types';
 
-const SYSTEM_PROMPT = `English grammar checker for Chinese speakers. Find errors in the given sentence.
+const SYSTEM_PROMPT = `You are an English grammar checker for Chinese speakers. Find ALL errors in the sentence.
 
-Types: grammar, spelling, expression (unnatural), translation (Chinese→English).
-Explain in ≤15 Chinese chars (rule only). Include "context" (surrounding text).
-No errors → return [].
-Return JSON: [{"original","corrected","alternatives?","context","type","explanation"}]`;
+CRITICAL — classify each error into ONE of these types:
+- "spelling": misspelled word (wrong letters). Examples: "recieve"→"receive", "teh"→"the", "writen"→"written"
+- "grammar": tense, agreement, verb form, article, preposition, pronoun, word order, redundancy. Examples: "he go"→"he goes", "can able"→"can", "I has"→"I have"
+- "expression": correct grammar but wordy, awkward, or unnatural. Examples: "make a discussion"→"discuss", "at this point in time"→"now", "in my opinion I think"→"I think"
+- "translation": Chinese text that should be written in English. Provide the English translation as "corrected".
+
+RULES:
+- If you see Chinese characters mixed in, classify as "translation".
+- Spelling errors are ONLY about wrong letters. Verb form errors (writed→wrote) are "grammar".
+- Explain in ≤15 Chinese chars, state only the rule (e.g. "过去时" not "你描述的是过去所以用过去时").
+- Include "context" (≈20 chars of surrounding text).
+- If no errors, return [].
+- Return ONLY a JSON array, no other text.`;
 
 export class AIChecker {
   private getSettings: () => LangGhostSettings;
@@ -27,7 +36,11 @@ export class AIChecker {
     const startTime = Date.now();
 
     try {
-      const endpoint = settings.apiEndpoint.replace(/\/$/, '') + '/chat/completions';
+      let base = settings.apiEndpoint.replace(/\/$/, '');
+      if (!base.endsWith('/chat/completions')) {
+        base += '/chat/completions';
+      }
+      const endpoint = base;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000);
       const response = await fetch(endpoint, {
@@ -67,18 +80,24 @@ export class AIChecker {
       const corrections = parseJSON(content);
       if (!corrections) return [];
 
-      return corrections.map((c): ErrorItem => ({
-        id: crypto.randomUUID(),
-        original: c.original,
-        corrected: c.corrected,
-        alternatives: c.alternatives,
-        type: (c.type as any) || 'grammar',
-        explanation: c.explanation,
-        source: 'ai',
-        context: c.context,
-        sentence: text,
-        createdAt: Date.now(),
-      }));
+      return corrections.map((c): ErrorItem => {
+        const t = ((c.type as string) || 'grammar').toLowerCase();
+        const typeLabels: Record<string, string> = {
+          grammar: '语法', spelling: '拼写', expression: '表达', translation: '翻译',
+        };
+        return {
+          id: crypto.randomUUID(),
+          original: c.original,
+          corrected: c.corrected,
+          alternatives: c.alternatives,
+          type: t,
+          explanation: c.explanation || typeLabels[t] || t,
+          source: 'ai',
+          context: c.context,
+          sentence: text,
+          createdAt: Date.now(),
+        };
+      });
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
         this.onStatusChange('AI check timed out');

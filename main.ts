@@ -1,7 +1,7 @@
 import { Plugin, MarkdownView } from 'obsidian';
-import { StateField } from '@codemirror/state';
+import { StateField, type Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { DEFAULT_SETTINGS, type LangGhostSettings, markStoreChangedEffect } from './src/types';
+import { DEFAULT_SETTINGS, type LangGhostSettings, type ErrorMark, markStoreChangedEffect } from './src/types';
 import { LangGhostSettingTab } from './src/settings';
 import { MarkStore } from './src/markStore';
 import { AIChecker } from './src/checker';
@@ -109,6 +109,42 @@ export default class LangGhostPlugin extends Plugin {
       createTooltipExtension(markStoreField, dispatcherField, pluginField),
     ]);
 
+    // Keyboard shortcut: apply fix at cursor
+    this.addCommand({
+      id: 'apply-fix',
+      name: 'LangGhost: Apply fix at cursor',
+      editorCallback: (_editor, view) => {
+        if (!view.file) return;
+        const cm = (view.editor as any).cm as EditorView;
+        if (!cm) return;
+        const pos = cm.state.selection.main.head;
+        const marks = this.markStore.getMarks(view.file.path);
+        // Find mark whose range contains or is nearest to cursor
+        const mark = marks.find(m => pos >= m.from && pos <= m.to);
+        if (mark) {
+          this.applyFix(view.file.path, mark.error.id);
+        }
+      },
+    });
+
+    // Keyboard shortcut: apply all fixes in current sentence
+    this.addCommand({
+      id: 'apply-sentence',
+      name: 'LangGhost: Apply all fixes in sentence',
+      editorCallback: (_editor, view) => {
+        if (!view.file) return;
+        const cm = (view.editor as any).cm as EditorView;
+        if (!cm) return;
+        const pos = cm.state.selection.main.head;
+        const marks = this.markStore.getMarks(view.file.path);
+        // Find the mark at or nearest to cursor, get its sentence
+        const mark = marks.find(m => pos >= m.from && pos <= m.to);
+        if (mark) {
+          this.applyAllInSentence(view.file.path, mark.sentenceFrom);
+        }
+      },
+    });
+
     // Settings tab
     this.addSettingTab(new LangGhostSettingTab(this.app, this));
 
@@ -187,7 +223,8 @@ export default class LangGhostPlugin extends Plugin {
       })
     );
 
-    // Clean up ignored set when a file is closed (prevents memory leak).
+    // Clear ignored state when a file is opened — starts a new editing session.
+    // Per PRD: close and reopen a file means errors reappear.
     // Note: we keep marks for persistence; only clear the in-memory ignored set.
     this.registerEvent(
       this.app.workspace.on('file-open', (file) => {
@@ -198,6 +235,87 @@ export default class LangGhostPlugin extends Plugin {
     );
 
     console.log('LangGhost loaded');
+  }
+
+  /** Apply a single error fix by errorId. Used by tooltip, sidebar, and
+   *  keyboard shortcut. Returns true if the fix was applied. */
+  applyFix(filePath: string, errorId: string): boolean {
+    const mark = this.markStore.getMarks(filePath).find(m => m.error.id === errorId);
+    if (!mark) return false;
+
+    const cm = this.getEditorForFile(filePath);
+    if (!cm) return false;
+
+    const doc = cm.state.doc;
+    const from = Math.min(mark.from, doc.length);
+    const to = Math.min(mark.to, doc.length);
+    if (from >= to) return false;
+    if (doc.sliceString(from, to) !== mark.error.original) return false;
+
+    this.markStore.removeMark(filePath, mark.error.id);
+
+    cm.dispatch({ changes: { from, to, insert: mark.error.corrected } });
+    this.errorBook.appendError(mark.error);
+    return true;
+  }
+
+  /** Apply all fixes in one sentence at once in a single CM6 transaction. */
+  applyAllInSentence(filePath: string, sentenceFrom: number): boolean {
+    const allMarks = this.markStore.getMarks(filePath);
+    const sentenceMarks = allMarks.filter(
+      m => m.sentenceFrom === sentenceFrom && m.from < m.to
+    );
+    if (sentenceMarks.length === 0) return false;
+
+    const cm = this.getEditorForFile(filePath);
+    if (!cm) return false;
+
+    const doc = cm.state.doc;
+    // Sort right-to-left so earlier changes don't shift later positions
+    sentenceMarks.sort((a, b) => b.from - a.from);
+
+    const changes: { from: number; to: number; insert: string }[] = [];
+    const validMarks: ErrorMark[] = [];
+
+    for (const m of sentenceMarks) {
+      const f = Math.min(m.from, doc.length);
+      const t = Math.min(m.to, doc.length);
+      if (f >= t) continue;
+      if (doc.sliceString(f, t) !== m.error.original) continue;
+      changes.push({ from: f, to: t, insert: m.error.corrected });
+      validMarks.push(m);
+    }
+
+    if (changes.length === 0) return false;
+
+    // Remove all marks, dispatch combined change
+    for (const m of validMarks) {
+      this.markStore.removeMark(filePath, m.error.id);
+    }
+    cm.dispatch({ changes });
+    for (const m of validMarks) {
+      this.errorBook.appendError(m.error);
+    }
+    // Recheck: pass empty replaceIds since all sentence marks were already removed
+    this.dispatcher.recheckAroundSeamless(
+      filePath,
+      changes[changes.length - 1].from + changes[changes.length - 1].insert.length,
+      cm.state.doc,
+      []
+    );
+    return true;
+  }
+
+  /** Get the CM6 EditorView for a given file path. */
+  getEditorForFile(filePath: string): EditorView | null {
+    for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+      const view = leaf.view as MarkdownView;
+      if (view.file?.path === filePath) {
+        const cm = (view.editor as any).cm as EditorView;
+        if (cm) return cm;
+      }
+    }
+    return null;
   }
 
   async onunload() {

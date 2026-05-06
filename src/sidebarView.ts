@@ -20,12 +20,14 @@ export class LangGhostSidebarView extends ItemView {
   private plugin: LangGhostPlugin;
   private listEl: HTMLElement;
   private emptyEl: HTMLElement;
+  private scanBtn: HTMLButtonElement;
+  private hintEl: HTMLElement;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private boundRefresh: () => void;
   private boundOnLeafChange: () => void;
-  /** Track the last known markdown file path so we can still show content
-   *  when the sidebar itself has focus (getActiveViewOfType would return null). */
   private lastFilePath: string | null = null;
+  /** Files that have been checked at least once (by typing or scan). */
+  private checkedFiles: Set<string> = new Set();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -58,6 +60,17 @@ export class LangGhostSidebarView extends ItemView {
     container.empty();
     container.classList.add('langghost-sidebar');
 
+    // Scan button — manually trigger full-document check
+    this.scanBtn = container.createEl('button', {
+      cls: 'langghost-sidebar-scan-btn',
+      text: '检查全文',
+    });
+    this.scanBtn.addEventListener('click', () => this.scanDocument());
+
+    // Hint for first-time users
+    this.hintEl = container.createDiv({ cls: 'langghost-sidebar-hint' });
+    this.hintEl.textContent = '写英文句子，以 . ? ! 结尾即可自动检查';
+
     this.emptyEl = container.createDiv({ cls: 'langghost-sidebar-empty' });
     this.emptyEl.textContent = '没有发现错误';
 
@@ -67,8 +80,6 @@ export class LangGhostSidebarView extends ItemView {
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', this.boundOnLeafChange)
     );
-    // Also refresh when the active file changes within the same leaf
-    // (e.g. quick-switcher, Ctrl+Tab, clicking search results)
     this.registerEvent(
       this.app.workspace.on('file-open', this.boundOnLeafChange)
     );
@@ -93,38 +104,143 @@ export class LangGhostSidebarView extends ItemView {
     this.scheduleRefresh();
   }
 
+  /** Scan the entire current document and check all sentences.
+   *  Triggered manually by the user via the sidebar button. */
+  private scanDocument(): void {
+    const filePath = this.getActiveFilePath();
+    if (!filePath) return;
+    if (!this.plugin.settings.enabled) return;
+
+    const cm = this.getEditorForFile(filePath);
+    if (!cm) return;
+
+    this.checkedFiles.add(filePath);
+    this.scanBtn.textContent = '检查中...';
+    this.scanBtn.disabled = true;
+
+    const count = this.dispatcher.scanFile(filePath, cm.state.doc);
+
+    // Show count feedback, then restore button after results start coming in
+    this.scanBtn.textContent = `已检查 ${count} 句`;
+    setTimeout(() => {
+      this.scanBtn.textContent = '检查全文';
+      this.scanBtn.disabled = false;
+      this.requestRefresh();
+    }, 2000);
+  }
+
   private refresh(): void {
     const filePath = this.getActiveFilePath();
     if (!filePath) {
-      this.showEmpty();
+      this.showEmpty('打开一个 Markdown 文件即可开始');
+      this.scanBtn.style.display = 'none';
+      this.hintEl.style.display = 'none';
       return;
     }
     if (!this.plugin.settings.enabled) {
       this.showEmpty('LangGhost: 检查已禁用');
+      this.scanBtn.style.display = 'none';
+      this.hintEl.style.display = 'none';
       return;
     }
 
     const marks = this.markStore.getMarks(filePath);
+    if (marks.length > 0) {
+      this.checkedFiles.add(filePath);
+    }
+
     if (marks.length === 0) {
-      this.showEmpty();
+      if (this.checkedFiles.has(filePath)) {
+        this.showEmpty('没有发现错误 ✓');
+      } else {
+        this.showEmpty('尚未检查');
+        this.hintEl.style.display = 'block';
+      }
+      this.scanBtn.style.display = 'block';
       return;
     }
 
-    // Sort by position
-    marks.sort((a, b) => a.from - b.from);
+    // Group marks by sentence, sort groups by position
+    const groups = new Map<number, ErrorMark[]>();
+    for (const m of marks) {
+      const list = groups.get(m.sentenceFrom) || [];
+      list.push(m);
+      groups.set(m.sentenceFrom, list);
+    }
+    const sortedGroups = [...groups.entries()].sort((a, b) => a[0] - b[0]);
 
     this.emptyEl.style.display = 'none';
+    this.hintEl.style.display = 'none';
     this.listEl.style.display = 'block';
     this.listEl.empty();
+    this.scanBtn.style.display = 'block';
 
-    for (const mark of marks) {
-      this.listEl.appendChild(this.createItem(mark, filePath));
+    for (const [sentenceFrom, groupMarks] of sortedGroups) {
+      groupMarks.sort((a, b) => a.from - b.from);
+      this.listEl.appendChild(this.createSentenceGroup(sentenceFrom, groupMarks, filePath));
     }
   }
 
-  private createItem(mark: ErrorMark, filePath: string): HTMLElement {
+  /** Create a collapsible sentence group: header with text + apply-all, then error items. */
+  private createSentenceGroup(sentenceFrom: number, marks: ErrorMark[], filePath: string): HTMLElement {
+    const group = document.createElement('div');
+    group.className = 'langghost-sentence-group';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'langghost-sentence-header';
+
+    const toggle = document.createElement('span');
+    toggle.className = 'langghost-sentence-toggle';
+    toggle.textContent = '▼';
+
+    const text = document.createElement('span');
+    text.className = 'langghost-sentence-text';
+    const raw = marks[0]?.error.sentence || '';
+    text.textContent = raw.length > 60 ? raw.substring(0, 57) + '...' : raw;
+
+    const count = document.createElement('span');
+    count.className = 'langghost-sentence-count';
+    count.textContent = `${marks.length} errors`;
+
+    const applyAll = document.createElement('button');
+    applyAll.className = 'langghost-sentence-apply-all';
+    applyAll.textContent = '应用整句';
+    applyAll.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.plugin.applyAllInSentence(filePath, sentenceFrom);
+    });
+
+    header.appendChild(toggle);
+    header.appendChild(text);
+    header.appendChild(count);
+    header.appendChild(applyAll);
+
+    // Error list
+    const errorList = document.createElement('div');
+    errorList.className = 'langghost-sentence-errors';
+
+    for (const mark of marks) {
+      errorList.appendChild(this.createErrorItem(mark, filePath));
+    }
+
+    // Toggle collapse
+    header.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).tagName === 'BUTTON') return;
+      const collapsed = errorList.style.display === 'none';
+      errorList.style.display = collapsed ? 'block' : 'none';
+      toggle.textContent = collapsed ? '▼' : '▶';
+    });
+
+    group.appendChild(header);
+    group.appendChild(errorList);
+    return group;
+  }
+
+  /** Create a single error item inside a sentence group. */
+  private createErrorItem(mark: ErrorMark, filePath: string): HTMLElement {
     const item = document.createElement('div');
-    item.className = 'langghost-sidebar-item';
+    item.className = 'langghost-error-item';
 
     // Fix line: original → corrected
     const fix = document.createElement('div');
@@ -153,25 +269,17 @@ export class LangGhostSidebarView extends ItemView {
 
     const typeTag = document.createElement('span');
     typeTag.className = `langghost-sidebar-type langghost-sidebar-type-${mark.error.type}`;
-    typeTag.textContent = TYPE_LABELS[mark.error.type] || mark.error.type;
+    typeTag.textContent = TYPE_LABELS[mark.error.type?.toLowerCase()] || mark.error.type;
 
     const explain = document.createElement('span');
     explain.className = 'langghost-sidebar-explain';
-    explain.textContent = mark.error.explanation;
+    explain.textContent = mark.error.explanation || TYPE_LABELS[mark.error.type?.toLowerCase()] || mark.error.type;
 
     meta.appendChild(typeTag);
     meta.appendChild(explain);
     item.appendChild(meta);
 
-    // Alternatives
-    if (mark.error.alternatives && mark.error.alternatives.length > 0) {
-      const alt = document.createElement('div');
-      alt.className = 'langghost-sidebar-alt';
-      alt.textContent = '或: ' + mark.error.alternatives.join(', ');
-      item.appendChild(alt);
-    }
-
-    // Actions
+    // Actions: apply + ignore (no apply-all here, that's on the group header)
     const actions = document.createElement('div');
     actions.className = 'langghost-sidebar-actions';
 
@@ -182,8 +290,7 @@ export class LangGhostSidebarView extends ItemView {
     applyBtn.textContent = '应用';
     applyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Look up the LATEST mark position from the store, not the stale closure
-      this.applyFix(errorId, filePath);
+      this.plugin.applyFix(filePath, errorId);
     });
 
     const ignoreBtn = document.createElement('button');
@@ -198,7 +305,7 @@ export class LangGhostSidebarView extends ItemView {
     actions.appendChild(ignoreBtn);
     item.appendChild(actions);
 
-    // Click to navigate — use errorId to look up fresh position
+    // Click to navigate
     item.addEventListener('click', () => {
       this.navigateToError(errorId, filePath);
     });
@@ -220,52 +327,8 @@ export class LangGhostSidebarView extends ItemView {
     return null;
   }
 
-  /** Find a fresh (non-ignored) mark by errorId from the store. */
-  private findFreshMark(errorId: string, filePath: string): ErrorMark | null {
-    return this.markStore.getMarks(filePath).find(m => m.error.id === errorId) ?? null;
-  }
-
-  private applyFix(errorId: string, filePath: string): void {
-    const mark = this.findFreshMark(errorId, filePath);
-    if (!mark) { console.warn('[LG sidebar] mark not found:', errorId, filePath); return; }
-
-    const cm = this.getEditorForFile(filePath);
-    if (!cm) { console.warn('[LG sidebar] no editor for:', filePath); return; }
-
-    const doc = cm.state.doc;
-    const from = Math.min(mark.from, doc.length);
-    const to = Math.min(mark.to, doc.length);
-
-    // Validate position: text at mark must still match
-    if (from >= to) { console.warn('[LG sidebar] invalid range:', from, to); return; }
-    const currentText = doc.sliceString(from, to);
-    if (currentText !== mark.error.original) {
-      console.warn('[LG sidebar] text mismatch:', JSON.stringify({ expected: mark.error.original, actual: currentText, from, to, docLen: doc.length }));
-      return;
-    }
-
-    // Remove mark BEFORE dispatching the text change.
-    // If we dispatch first, the CM6 update runs synchronously and
-    // validateMarks sees the replaced text, thinks the mark is stale,
-    // and records it to the error book — causing a duplicate entry.
-    this.markStore.removeMark(filePath, mark.error.id);
-
-    // Replace text
-    cm.dispatch({
-      changes: { from, to, insert: mark.error.corrected },
-    });
-
-    // Record to error book
-    this.plugin.errorBook.appendError(mark.error);
-
-    // Do NOT recheck — recheck clears ALL marks in the sentence range
-    // (including other unrelated errors), causing wavy lines to vanish.
-    // The decorations plugin's validateMarks handles stale marks,
-    // and position mapping adjusts the surviving ones.
-  }
-
   private navigateToError(errorId: string, filePath: string): void {
-    const mark = this.findFreshMark(errorId, filePath);
+    const mark = this.markStore.getMarks(filePath).find(m => m.error.id === errorId);
     if (!mark) return;
 
     const cm = this.getEditorForFile(filePath);
@@ -277,7 +340,6 @@ export class LangGhostSidebarView extends ItemView {
       scrollIntoView: true,
     });
 
-    // Focus the editor
     cm.focus();
   }
 

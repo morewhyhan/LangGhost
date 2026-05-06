@@ -28,14 +28,13 @@ export function createDetectorExtension(
       // Check if any change added a sentence-ending character
       update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
         const insertedText = inserted.toString();
-        for (const ch of insertedText) {
-          if (SENTENCE_END_CHARS.has(ch)) {
-            const triggerPos = fromB + insertedText.indexOf(ch);
+        for (let i = 0; i < insertedText.length; i++) {
+          if (SENTENCE_END_CHARS.has(insertedText[i])) {
+            const triggerPos = fromB + i;
             const sentence = extractSentence(update.state.doc, triggerPos);
             if (sentence) {
               dispatcher.dispatch(sentence, filePath);
             }
-            return; // Only trigger once per change
           }
         }
       });
