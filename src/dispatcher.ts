@@ -1,7 +1,9 @@
+import type { Text } from '@codemirror/state';
 import type { ErrorItem, ErrorMark, SentenceRange, LangGhostSettings } from './types';
 import type { MarkStore } from './markStore';
 import type { AIChecker } from './checker';
 import type { LocalLinter } from './linter';
+import { extractSentence } from './extractor';
 
 export class Dispatcher {
   private markStore: MarkStore;
@@ -21,7 +23,7 @@ export class Dispatcher {
   }
 
   async dispatch(sentence: SentenceRange, filePath: string): Promise<void> {
-    const key = filePath + ':' + sentence.text;
+    const key = filePath + ':' + sentence.from + ':' + sentence.text;
 
     if (this.activeChecks.has(key)) {
       return;
@@ -42,6 +44,96 @@ export class Dispatcher {
   async recheck(sentence: SentenceRange, filePath: string): Promise<void> {
     this.markStore.clearSentenceMarks(filePath, sentence.from, sentence.to);
     await this.dispatch(sentence, filePath);
+  }
+
+  /** Scan the entire document for complete sentences and dispatch checks.
+   *  Used when a file is first opened (no existing marks) or when the plugin
+   *  is re-enabled, so existing text doesn't sit unchecked.
+   *  Returns the number of sentences dispatched.
+   *  Capped at `maxSentences` to avoid token-cost explosion on large docs. */
+  scanFile(filePath: string, doc: Text, maxSentences = 50): number {
+    const text = doc.toString();
+    const len = text.length;
+    let count = 0;
+    for (let i = 0; i < len && count < maxSentences; i++) {
+      const ch = text[i];
+      if (ch === '.' || ch === '?' || ch === '!' ||
+          ch === '\u3002' || ch === '\uff1f' || ch === '\uff01') {
+        const sentence = extractSentence(doc, i);
+        if (sentence) {
+          this.dispatch(sentence, filePath);
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /** After a fix is applied, re-extract the current sentence and recheck it.
+   *  Scan forward from `pos` to find the sentence-ending character, then
+   *  extract and recheck. */
+  recheckAround(filePath: string, pos: number, doc: Text): void {
+    if (pos >= doc.length) return;
+    const slice = doc.sliceString(pos, Math.min(doc.length, pos + 500));
+    const endIdx = slice.search(/[.?!\u3002\uff1f\uff01]/);
+    if (endIdx === -1) return;
+    const triggerPos = pos + endIdx;
+    const sentence = extractSentence(doc, triggerPos);
+    if (sentence) {
+      this.recheck(sentence, filePath);
+    }
+  }
+
+  /** Seamless version: atomically replace old sentence marks with new results
+   *  in a single notify — no gap where marks temporarily disappear. */
+  recheckAroundSeamless(filePath: string, pos: number, doc: Text, replaceIds: string[]): void {
+    if (pos >= doc.length) return;
+    const slice = doc.sliceString(pos, Math.min(doc.length, pos + 500));
+    const endIdx = slice.search(/[.?!\u3002\uff1f\uff01]/);
+    if (endIdx === -1) return;
+    const triggerPos = pos + endIdx;
+    const sentence = extractSentence(doc, triggerPos);
+    if (sentence) {
+      this.runRecheck(sentence, filePath, replaceIds);
+    }
+  }
+
+  private async runRecheck(sentence: SentenceRange, filePath: string, replaceIds: string[]): Promise<void> {
+    try {
+      // Phase 1: Local lint — collect results, do NOT add to store yet
+      // (adding now would conflict with old marks still in the store)
+      let localMarks: ErrorMark[] = [];
+      if (this.linter.isReady()) {
+        try {
+          const localErrors = await this.linter.lint(sentence.text);
+          if (localErrors.length > 0) {
+            localMarks = errorsToMarks(localErrors, sentence);
+          }
+        } catch (e) {
+          console.error('LangGhost: local lint error', e);
+        }
+      }
+
+      // Phase 2: AI check
+      const settings = this.getSettings();
+      if (!settings.apiKey) {
+        // No AI: atomically swap old marks for local marks
+        this.markStore.replaceMarks(filePath, replaceIds, localMarks);
+        return;
+      }
+
+      const aiErrors = await this.enqueueAI(() => this.checker.check(sentence.text));
+
+      // Atomically replace old sentence marks with AI results (or local fallback)
+      if (aiErrors.length > 0) {
+        const aiMarks = errorsToMarks(aiErrors, sentence);
+        this.markStore.replaceMarks(filePath, replaceIds, aiMarks);
+      } else {
+        this.markStore.replaceMarks(filePath, replaceIds, localMarks);
+      }
+    } catch (e) {
+      console.error('LangGhost: runRecheck error', e);
+    }
   }
 
   private async runCheck(sentence: SentenceRange, filePath: string): Promise<void> {
@@ -68,15 +160,12 @@ export class Dispatcher {
 
     const aiErrors = await this.enqueueAI(() => this.checker.check(sentence.text));
 
-    // Remove local marks by ID (position-safe), then add AI marks
-    if (localMarkIds.length > 0) {
-      this.markStore.removeMarksById(filePath, localMarkIds);
-    }
+    // Only replace local marks when AI returned results.
+    // If AI fails (empty result), keep local marks as fallback.
+    // Use replaceMarks for atomic swap — single notify, no flicker.
     if (aiErrors.length > 0) {
       const aiMarks = errorsToMarks(aiErrors, sentence);
-      if (aiMarks.length > 0) {
-        this.markStore.addMarks(filePath, aiMarks);
-      }
+      this.markStore.replaceMarks(filePath, localMarkIds, aiMarks);
     }
   }
 

@@ -31,8 +31,10 @@ const RULE_EXPLANATIONS: Record<string, string> = {
 };
 
 function getExplanation(lintKind: string, message: string): string {
+  // Case-insensitive match — harper.js may return varying casing
+  const lower = lintKind.toLowerCase();
   for (const [key, value] of Object.entries(RULE_EXPLANATIONS)) {
-    if (lintKind.includes(key)) {
+    if (lower.includes(key.toLowerCase())) {
       return value;
     }
   }

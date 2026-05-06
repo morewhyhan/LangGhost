@@ -20,11 +20,9 @@ export function createDecorationsExtension(
 ): unknown {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet;
-    private prevMarks: Map<string, string> = new Map(); // errorId → original text
 
     constructor(view: EditorView) {
       this.decorations = this.buildDecorations(view);
-      this.snapshotMarks(view);
     }
 
     update(update: ViewUpdate) {
@@ -62,7 +60,6 @@ export function createDecorationsExtension(
 
       if (update.docChanged || update.viewportChanged || marksChanged) {
         this.decorations = this.buildDecorations(update.view);
-        this.snapshotMarks(update.view);
       }
     }
 
@@ -139,18 +136,6 @@ export function createDecorationsExtension(
       }
     }
 
-    private snapshotMarks(view: EditorView) {
-      this.prevMarks.clear();
-      const markStore = view.state.field(markStoreField);
-      const info = view.state.field(editorInfoField);
-      const filePath = (info as any).file?.path;
-      if (!filePath) return;
-
-      for (const mark of markStore.getMarks(filePath)) {
-        this.prevMarks.set(mark.error.id, mark.error.original);
-      }
-    }
-
     buildDecorations(view: EditorView): DecorationSet {
       const markStore = view.state.field(markStoreField);
       const info = view.state.field(editorInfoField);
@@ -163,7 +148,7 @@ export function createDecorationsExtension(
       if (marks.length === 0) return Decoration.none;
 
       const decorations = marks.map(mark => {
-        const cls = CLASS_MAP[mark.error.type] || 'langghost-grammar';
+        const cls = CLASS_MAP[mark.error.type?.toLowerCase()] || 'langghost-grammar';
         return Decoration.mark({
           class: cls,
         }).range(mark.from, mark.to);

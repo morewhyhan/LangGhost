@@ -65,6 +65,23 @@ export class MarkStore {
     this.notify(filePath);
   }
 
+  /** Atomically remove marks by ID and add new marks — single notify,
+   *  no flicker. Used when AI results replace local marks. */
+  replaceMarks(filePath: string, removeIds: string[], add: ErrorMark[]): void {
+    const existing = this.marks.get(filePath) ?? [];
+    const idSet = new Set(removeIds);
+    const remaining = existing.filter(m => !idSet.has(m.error.id));
+    const accepted: ErrorMark[] = [];
+    const newMarks = add.filter(m => {
+      const all = remaining.concat(accepted);
+      if (all.some(e => m.from < e.to && m.to > e.from)) return false;
+      accepted.push(m);
+      return true;
+    });
+    this.marks.set(filePath, [...remaining, ...newMarks]);
+    this.notify(filePath);
+  }
+
   getMarks(filePath: string): ErrorMark[] {
     const marks = this.marks.get(filePath) ?? [];
     const ignoredSet = this.ignored.get(filePath);
@@ -138,7 +155,9 @@ export class MarkStore {
   }
 
   onFileOpen(filePath: string): void {
-    // Placeholder for persistence restore
+    // Clear ignored state when a file is opened — starts a new editing session.
+    // Per PRD: "关掉文件再打开，同样的错误会重新标出来"
+    this.ignored.delete(filePath);
   }
 
   onFileClose(filePath: string): void {

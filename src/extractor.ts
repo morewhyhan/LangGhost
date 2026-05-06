@@ -7,6 +7,7 @@ const ABBREVIATIONS = new Set([
   'vs', 'etc', 'e.g', 'i.e',
   'u.s', 'u.k', 'a.m', 'p.m',
   'inc', 'corp', 'ltd', 'co',
+  'no', 'viz', 'ca', 'est', 'approx',
 ]);
 
 const SENTENCE_END = new Set(['.', '?', '!', '\u3002', '\uff1f', '\uff01']);
@@ -32,17 +33,36 @@ function isInsideCodeBlock(text: string, pos: number): boolean {
 function isInsideDoubleLink(text: string, pos: number): boolean {
   const before = text.substring(0, pos);
   const lastOpen = before.lastIndexOf('[[');
-  const lastClose = before.lastIndexOf(']]');
-  return lastOpen !== -1 && lastOpen > lastClose;
+  if (lastOpen === -1) return false;
+  const lastCloseBefore = before.lastIndexOf(']]');
+  if (lastCloseBefore > lastOpen) return false; // link already closed before pos
+
+  // Check if there's a closing ]] after pos (search up to 500 chars ahead)
+  const after = text.substring(pos);
+  const closeAfter = after.indexOf(']]');
+  if (closeAfter === -1) return false; // unclosed — don't block all subsequent text
+  // Ensure no [[ between pos and ]] (otherwise pos is between two separate links)
+  const openBetween = after.substring(0, closeAfter).indexOf('[[');
+  if (openBetween !== -1) return false;
+
+  return true; // pos is inside [[...]]
 }
 
 function isInsideTag(text: string, pos: number): boolean {
-  const before = text.substring(0, pos);
-  const lastHash = before.lastIndexOf('#');
-  if (lastHash === -1) return false;
-  const afterHash = before.substring(lastHash + 1);
-  // Tag is a single word (no spaces) after #
-  return /^\S*$/.test(afterHash);
+  // Valid Obsidian tag characters: letters, digits, hyphens, underscores,
+  // forward slashes (for nested tags), and CJK characters.
+  // Sentence-ending chars (., ?, !, etc.) are NOT valid tag chars,
+  // so this check will only return true if pos genuinely points inside a tag.
+  if (pos >= text.length) return false;
+  const ch = text[pos];
+  if (!/^[a-zA-Z0-9\u4e00-\u9fff\-_\/]$/.test(ch)) return false;
+
+  // Walk backwards from pos to find #
+  for (let i = pos - 1; i >= 0; i--) {
+    if (text[i] === '#') return true;
+    if (!/^[a-zA-Z0-9\u4e00-\u9fff\-_\/]$/.test(text[i])) return false;
+  }
+  return false;
 }
 
 export function extractSentence(doc: Text, triggerPos: number): SentenceRange | null {
@@ -107,7 +127,7 @@ export function extractSentence(doc: Text, triggerPos: number): SentenceRange | 
 
 function findWordStart(text: string, periodPos: number): number {
   let i = periodPos - 1;
-  while (i >= 0 && /[a-zA-Z]/.test(text[i])) {
+  while (i >= 0 && /[a-zA-Z.]/.test(text[i])) {
     i--;
   }
   return i + 1;
