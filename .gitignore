@@ -1,3 +1,12 @@
 node_modules/
 .env
 .DS_Store
+
+# Build output
+main.js
+
+# Binary dependencies (downloaded separately)
+*.wasm
+
+# Distribution packages
+*.zip
