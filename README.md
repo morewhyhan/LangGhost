@@ -1,87 +1,71 @@
 # LangGhost
 
-Obsidian 英语写作辅助插件。随便写，写完一句自动标出错误，点一下就能改。
-
-面向英语非母语者——用写日记的方式练习英语，语法错了自动标出来。
-
-## 功能
-
-- **写完自动检查** — 敲完句号、问号、感叹号，错误立刻标出来
-- **双层检查** — 本地语法/拼写（离线、毫秒级）+ AI 表达建议和中译英
-- **四色波浪线** — 红色（语法）、蓝色（拼写）、黄色（更地道的说法）、绿色（中文→英文）
-- **悬浮修正** — 鼠标悬停波浪线，弹出气泡，一键应用
-- **侧边栏错误列表** — 右侧面板列出所有错误，点击跳转，支持应用和忽略
-- **中英混写** — 写着写着冒出中文？AI 会建议翻译成英语
-- **错题本** — 每次修正自动记录到 vault 里的 Markdown 文件，自己翻着看
+Obsidian 英语写作辅助插件。写完一句自动检查，快捷键一键修复。
 
 ## 安装
 
-1. 将 `main.js`、`manifest.json`、`styles.css`、`harper_wasm_bg.wasm` 复制到 vault 的 `.obsidian/plugins/langghost/` 目录
-2. 在 Obsidian 设置中启用插件
-3. （可选）在插件设置中填入 AI API Key，获得表达建议和中译英功能
+[**> 点此下载最新版 <**](https://github.com/morewhyhan/LangGhost/releases/latest/download/langghost.zip)
+
+1. 下载 zip，解压到 vault 的 `.obsidian/plugins/langghost/`
+2. 设置 → 第三方插件 → 启用 LangGhost
+3. 设置 → LangGhost → 填入 API Key（不填也能用本地检查）
 4. 开始写
 
-## 配置
+## 怎么用
 
-| 设置项 | 默认值 | 说明 |
-|--------|--------|------|
-| API Key | *空* | AI 接口密钥。不填也能用本地检查 |
-| API 地址 | `https://api.deepseek.com/v1` | 任何 OpenAI 兼容的 API 地址 |
-| 模型 | `deepseek-chat` | API 使用的模型名称 |
-| 错题本路径 | `LangGhost/errors.md` | 错题记录文件在 vault 中的位置 |
+**写句子。** 以 `.` `?` `!` `。` 结尾自动触发检查。错误出现在句子里和右侧面板。
 
-不填 API Key 也能用——本地拼写和语法检查由 [harper.js](https://github.com/Automaltic/harper) 提供，离线可用。
+**修错误。** 三种方式：
+- `Ctrl+.` 修复光标前最近的一个错误
+- `Ctrl+Shift+.` 一键修复整句
+- 鼠标悬停波浪线，点气泡里的「应用」
 
-## 工作原理
+**自定义快捷键。** 设置 → 快捷键 → 搜索 `LangGhost` → 点 `+` 绑定你习惯的键。
 
-```
-用户写完一句话
-       │
-       ▼
-  ┌─────────────┐
-  │ harper.js    │  第一层：本地（毫秒级，离线，免费）
-  │ (WASM)       │  → 拼写错误（蓝色）+ 语法错误（红色）
-  └──────┬──────┘
-         │
-         ▼
-  ┌─────────────┐
-  │ AI API       │  第二层：语义（1-2秒，需要 API Key）
-  │ (DeepSeek)   │  → 表达建议（黄色）+ 中译英建议（绿色）
-  └──────┬──────┘
-         │
-         ▼
-    合并结果，渲染波浪线
-```
+**中英混写。** 写着写着冒出中文？插件会把中文标绿，AI 自动给出英文翻译，点一下应用。
 
-本地检查先跑（毫秒级），结果立即显示。AI 检查随后跑（1-2秒），与本地结果去重后追加。
+**检查全文。** 打开文件后侧边栏点「检查全文」扫描已有内容。或者设置里开「Auto-scan on file open」，每次打开自动扫前 10 句。
+
+**错题本。** 每次修正自动记到 `LangGhost/errors.md`，按日期分组，翻着回顾。
+
+## 设置
+
+| 设置 | 默认值 | 说明 |
+|------|--------|------|
+| API Key | *空* | DeepSeek 或 OpenAI 兼容 API 的 key。不填只用本地检查 |
+| API Endpoint | `https://api.deepseek.com/v1` | 换成任何 OpenAI 兼容地址 |
+| Model | `deepseek-chat` | 模型名 |
+| Error Book Path | `LangGhost/errors.md` | 记录修正历史的位置 |
+| Auto-scan on file open | 关 | 打开文件时自动检查已有文本 |
 
 ## 错误类型
 
-| 颜色 | 类型 | 示例 |
-|------|------|------|
-| 🔴 红色 | 语法错误 | `she don't` → `she doesn't` |
-| 🔵 蓝色 | 拼写错误 | `delicous` → `delicious` |
-| 🟡 黄色 | 表达建议 | `very good` → `excellent` |
-| 🟢 绿色 | 中译英 | `今天` → `today` |
+| 颜色 | 类型 | 来源 | 示例 |
+|------|------|------|------|
+| 蓝色波浪线 | 拼写 | 本地 harper.js | `recieve` → `receive` |
+| 红色波浪线 | 语法 | 本地 harper.js | `he go` → `he goes` |
+| 黄色波浪线 | 表达 | AI | `make a discussion` → `discuss` |
+| 绿色波浪线 | 翻译 | AI / 本地 | `你好` → `Hello` |
 
-## 错题本
+## 快捷键
 
-每次修正（应用或手动修改）都会追加到 vault 里的 Markdown 文件：
+| 默认快捷键 | 命令 |
+|-----------|------|
+| `Ctrl+.` | Fix nearest error — 修复光标前最近的错误 |
+| `Ctrl+Shift+.` | Fix all in sentence — 修复光标所在整句 |
 
-```markdown
-## 2026-05-05
+想改的话去 Obsidian 设置 → 快捷键 → 搜 `LangGhost`。
 
-- **go → went** `语法` 过去时
-- **delicous → delicious** `拼写` 中间有两个 i
-```
+## 工作方式
 
-不做统计，不打分，不排排行。就是一本错题本，自己翻着看。
+两层检查，先本地后 AI：
 
-## 开关
+1. **本地**（毫秒级，离线）— harper.js WASM 引擎，拼写 + 基础语法
+2. **AI**（1-2秒，需 API Key）— 表达建议 + 中译英 + 复杂语法
 
-通过命令面板（`Ctrl/Cmd + P`）搜索「LangGhost: Enable/Disable checking」即可开关检查。
+本地结果立刻出现，AI 结果随后更新替换。纯中文自动走翻译提示词，保证可靠性。
 
-## 环境要求
+## 环境
 
 - Obsidian 1.5.0+
-- 仅桌面端
+- 仅桌面端（需要 WASM）
