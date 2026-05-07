@@ -77,7 +77,7 @@ export function createTooltipExtension(
           // Fix line: original → corrected
           const fix = document.createElement('div');
           fix.className = 'langghost-fix';
-          fix.textContent = `${mark.error.original} → ${mark.error.corrected}`;
+          fix.textContent = `${mark.error.original} → ${mark.error.corrected || '[需翻译]'}`;
           dom.appendChild(fix);
 
           // Alternatives
@@ -98,12 +98,17 @@ export function createTooltipExtension(
           const actions = document.createElement('div');
           actions.className = 'langghost-actions';
 
+          const hasCorrection = !!mark.error.corrected;
+
           const applyBtn = document.createElement('button');
           applyBtn.className = 'langghost-apply';
           applyBtn.textContent = '应用';
-          applyBtn.addEventListener('click', () => {
-            plugin.applyFix(filePath, mark.error.id);
-          });
+          applyBtn.disabled = !hasCorrection;
+          if (hasCorrection) {
+            applyBtn.addEventListener('click', () => {
+              plugin.applyFix(filePath, mark.error.id);
+            });
+          }
 
           const applyAllBtn = document.createElement('button');
           applyAllBtn.className = 'langghost-apply-all';

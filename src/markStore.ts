@@ -150,8 +150,13 @@ export class MarkStore {
       mark.sentenceFrom = mapFn(mark.sentenceFrom);
       mark.sentenceTo = mapFn(mark.sentenceTo);
     }
-    // Remove collapsed marks (text was deleted within mark range)
-    this.marks.set(filePath, marks.filter(m => m.from < m.to));
+    // Remove collapsed marks and notify so sidebar + decorations update
+    const before = marks.length;
+    const filtered = marks.filter(m => m.from < m.to);
+    this.marks.set(filePath, filtered);
+    if (filtered.length < before) {
+      this.notify(filePath);
+    }
   }
 
   onFileOpen(filePath: string): void {

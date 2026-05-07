@@ -149,6 +149,24 @@ export class LocalLinter {
         });
       }
 
+      // Pure CJK with no English: harper can't check it, and AI may
+      // misinterpret imperative phrases (e.g. "检查全文") as commands.
+      // Generate a translation mark locally so it's always flagged.
+      if (hasCJK && results.length === 0 && !/[a-zA-Z]/.test(text)) {
+        results.push({
+          id: crypto.randomUUID(),
+          original: text,
+          corrected: '',
+          alternatives: undefined,
+          type: 'translation',
+          explanation: '中文需翻译',
+          source: 'local',
+          context: text,
+          sentence: text,
+          createdAt: Date.now(),
+        });
+      }
+
       return results;
     } catch (e) {
       console.error('LangGhost: lint error', e);

@@ -96,7 +96,9 @@ export class LangGhostSidebarView extends ItemView {
 
   private scheduleRefresh(): void {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    this.refreshTimer = setTimeout(() => this.refresh(), 50);
+    // Use microtask: batches rapid changes, executes before next frame,
+    // so sidebar is always in sync with decorations.
+    this.refreshTimer = setTimeout(() => this.refresh(), 0);
   }
 
   /** Public method to trigger a refresh from outside (e.g., toggle command). */
@@ -151,10 +153,10 @@ export class LangGhostSidebarView extends ItemView {
 
     if (marks.length === 0) {
       if (this.checkedFiles.has(filePath)) {
-        this.showEmpty('没有发现错误 ✓');
+        this.showEmpty('没有发现错误');
       } else {
-        this.showEmpty('尚未检查');
-        this.hintEl.style.display = 'block';
+        this.showEmpty('输入英文句子，以 . ? ! 结尾自动检查');
+        this.hintEl.style.display = 'none';
       }
       this.scanBtn.style.display = 'block';
       return;
@@ -256,7 +258,7 @@ export class LangGhostSidebarView extends ItemView {
 
     const corr = document.createElement('span');
     corr.className = 'langghost-sidebar-corrected';
-    corr.textContent = mark.error.corrected;
+    corr.textContent = mark.error.corrected || '[需翻译]';
 
     fix.appendChild(orig);
     fix.appendChild(arrow);
@@ -285,13 +287,18 @@ export class LangGhostSidebarView extends ItemView {
 
     const errorId = mark.error.id;
 
+    const hasCorrection = !!mark.error.corrected;
+
     const applyBtn = document.createElement('button');
     applyBtn.className = 'langghost-sidebar-apply';
     applyBtn.textContent = '应用';
-    applyBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.plugin.applyFix(filePath, errorId);
-    });
+    applyBtn.disabled = !hasCorrection;
+    if (hasCorrection) {
+      applyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.plugin.applyFix(filePath, errorId);
+      });
+    }
 
     const ignoreBtn = document.createElement('button');
     ignoreBtn.className = 'langghost-sidebar-ignore';
