@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView } from 'obsidian';
+import { Notice, Plugin, MarkdownView } from 'obsidian';
 import { StateField, type Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { DEFAULT_SETTINGS, type LangGhostSettings, type ErrorMark, markStoreChangedEffect } from './src/types';
@@ -116,13 +116,15 @@ export default class LangGhostPlugin extends Plugin {
     this.addCommand({
       id: 'apply-fix',
       name: 'LangGhost: Fix nearest error',
-      hotkeys: [{ modifiers: ['Mod'], key: '.' }],
+      hotkeys: [{ modifiers: ['Mod', 'Alt'], key: '.' }],
       editorCallback: (_editor, view) => {
-        if (!view.file) return;
+        console.log('LangGhost: apply-fix command fired');
+        if (!view.file) { console.log('LangGhost: no file'); return; }
         const cm = (view.editor as any).cm as EditorView;
-        if (!cm) return;
+        if (!cm) { console.log('LangGhost: no CM6 editor'); return; }
         const pos = cm.state.selection.main.head;
         const marks = this.markStore.getMarks(view.file.path);
+        console.log('LangGhost: cursor=', pos, 'marks=', marks.length);
         // Priority: containing cursor → nearest before → nearest after
         let mark = marks.find(m => pos > m.from && pos < m.to);
         if (!mark) {
@@ -134,13 +136,16 @@ export default class LangGhostPlugin extends Plugin {
           mark = after.length ? after.reduce((a, b) => a.from < b.from ? a : b) : undefined;
         }
         if (mark) {
-          this.applyFix(view.file.path, mark.error.id);
+          const fixed = this.applyFix(view.file.path, mark.error.id);
+          console.log('LangGhost: applyFix result=', fixed, 'id=', mark.error.id);
           // Recheck sentence so remaining errors are re-evaluated
           this.dispatcher.recheckAround(view.file.path, Math.max(0, mark.from - 1), cm.state.doc);
         } else {
-          this.statusBarEl.setText(
-            this.linter.isReady() ? 'No errors at cursor' : 'LangGhost loading...'
-          );
+          const msg = this.linter.isReady()
+            ? 'LangGhost: no errors found'
+            : 'LangGhost: still loading...';
+          console.log('LangGhost:', msg);
+          new Notice(msg);
           setTimeout(() => this.updateStatusCount(view.file!.path), 1500);
         }
       },
