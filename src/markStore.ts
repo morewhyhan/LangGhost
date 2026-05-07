@@ -36,11 +36,25 @@ export class MarkStore {
     const existing = this.marks.get(filePath) ?? [];
     const accepted: ErrorMark[] = [];
     const newMarks = marks.filter(m => {
-      // Dedup by error.id
       if (existing.some(e => e.error.id === m.error.id)) return false;
-      // Skip if overlapping with an existing or already-accepted mark
       const all = existing.concat(accepted);
-      if (all.some(e => m.from < e.to && m.to > e.from)) return false;
+      const overlap = all.find(e => m.from < e.to && m.to > e.from);
+      if (overlap) {
+        // If the new mark is more specific (smaller range), replace the old one
+        const newLen = m.to - m.from;
+        const oldLen = overlap.to - overlap.from;
+        if (newLen < oldLen) {
+          const idx = accepted.indexOf(overlap);
+          if (idx >= 0) {
+            accepted[idx] = m;
+          } else {
+            // Existing mark in store — remove old, accept new
+            this.removeMark(filePath, overlap.error.id);
+            accepted.push(m);
+          }
+        }
+        return false;
+      }
       accepted.push(m);
       return true;
     });
@@ -74,7 +88,17 @@ export class MarkStore {
     const accepted: ErrorMark[] = [];
     const newMarks = add.filter(m => {
       const all = remaining.concat(accepted);
-      if (all.some(e => m.from < e.to && m.to > e.from)) return false;
+      const overlap = all.find(e => m.from < e.to && m.to > e.from);
+      if (overlap) {
+        // Prefer more specific (smaller range) mark
+        const newLen = m.to - m.from;
+        const oldLen = overlap.to - overlap.from;
+        if (newLen < oldLen) {
+          const idx = accepted.indexOf(overlap);
+          if (idx >= 0) accepted[idx] = m;
+        }
+        return false;
+      }
       accepted.push(m);
       return true;
     });
@@ -85,8 +109,15 @@ export class MarkStore {
   getMarks(filePath: string): ErrorMark[] {
     const marks = this.marks.get(filePath) ?? [];
     const ignoredSet = this.ignored.get(filePath);
-    if (!ignoredSet) return marks;
-    return marks.filter(m => !ignoredSet.has(m.error.id));
+    // Filter out both ignored and resolved marks
+    return marks.filter(m =>
+      !(ignoredSet?.has(m.error.id)) && !m.resolved
+    );
+  }
+
+  /** Get ALL marks for a file including resolved — used by validateMarks. */
+  getAllMarksUnfiltered(filePath: string): ErrorMark[] {
+    return this.marks.get(filePath) ?? [];
   }
 
   /** Check if raw (unfiltered) marks exist for a file — used to decide
@@ -102,7 +133,8 @@ export class MarkStore {
     if (marks) {
       this.marks.set(
         filePath,
-        marks.filter(m => m.from < from || m.to > to)
+        // Keep resolved marks — they survive rechecks so undo can revive them
+        marks.filter(m => m.resolved || m.from < from || m.to > to)
       );
       this.notify(filePath);
     }
@@ -163,6 +195,18 @@ export class MarkStore {
     // Clear ignored state when a file is opened — starts a new editing session.
     // Per PRD: "关掉文件再打开，同样的错误会重新标出来"
     this.ignored.delete(filePath);
+    // Un-resolve any resolved marks — fresh session, errors should show again
+    const marks = this.marks.get(filePath);
+    if (marks) {
+      let changed = false;
+      for (const m of marks) {
+        if (m.resolved) {
+          m.resolved = false;
+          changed = true;
+        }
+      }
+      if (changed) this.notify(filePath);
+    }
   }
 
   onFileClose(filePath: string): void {
@@ -181,7 +225,7 @@ export class MarkStore {
     }
   }
 
-  private notify(filePath: string): void {
+  notify(filePath: string): void {
     for (const fn of this.listeners) {
       fn(filePath);
     }

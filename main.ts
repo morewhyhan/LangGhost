@@ -260,9 +260,14 @@ export default class LangGhostPlugin extends Plugin {
   }
 
   /** Apply a single error fix by errorId. Used by tooltip, sidebar, and
-   *  keyboard shortcut. Returns true if the fix was applied. */
+   *  keyboard shortcut. Returns true if the fix was applied.
+   *
+   *  Instead of removing the mark, we set resolved=true. This way if the
+   *  user undoes the fix (Ctrl+Z), validateMarks can detect that the
+   *  original error text has returned and un-resolve the mark. */
   applyFix(filePath: string, errorId: string): boolean {
-    const mark = this.markStore.getMarks(filePath).find(m => m.error.id === errorId);
+    const allMarks = this.markStore.getAllMarksUnfiltered(filePath);
+    const mark = allMarks.find(m => m.error.id === errorId);
     if (!mark) return false;
 
     const cm = this.getEditorForFile(filePath);
@@ -273,20 +278,23 @@ export default class LangGhostPlugin extends Plugin {
     const to = Math.min(mark.to, doc.length);
     if (from >= to) return false;
     if (doc.sliceString(from, to) !== mark.error.original) return false;
-    if (!mark.error.corrected) return false; // e.g. pure-Chinese translation mark
+    if (!mark.error.corrected) return false;
 
-    this.markStore.removeMark(filePath, mark.error.id);
+    // Mark resolved — survives recheck so undo can revive it
+    mark.resolved = true;
+    this.markStore.notify(filePath);
 
     cm.dispatch({ changes: { from, to, insert: mark.error.corrected } });
     this.errorBook.appendError(mark.error);
     return true;
   }
 
-  /** Apply all fixes in one sentence at once in a single CM6 transaction. */
+  /** Apply all fixes in one sentence at once in a single CM6 transaction.
+   *  Marks are set to resolved (not removed) so undo can revive them. */
   applyAllInSentence(filePath: string, sentenceFrom: number): boolean {
-    const allMarks = this.markStore.getMarks(filePath);
+    const allMarks = this.markStore.getAllMarksUnfiltered(filePath);
     const sentenceMarks = allMarks.filter(
-      m => m.sentenceFrom === sentenceFrom && m.from < m.to
+      m => m.sentenceFrom === sentenceFrom && m.from < m.to && !m.resolved
     );
     if (sentenceMarks.length === 0) return false;
 
@@ -305,22 +313,25 @@ export default class LangGhostPlugin extends Plugin {
       const t = Math.min(m.to, doc.length);
       if (f >= t) continue;
       if (doc.sliceString(f, t) !== m.error.original) continue;
-      if (!m.error.corrected) continue; // e.g. pure-Chinese translation mark
+      if (!m.error.corrected) continue;
       changes.push({ from: f, to: t, insert: m.error.corrected });
       validMarks.push(m);
     }
 
     if (changes.length === 0) return false;
 
-    // Remove all marks, dispatch combined change
+    // Resolve marks instead of removing — undo can revive them
     for (const m of validMarks) {
-      this.markStore.removeMark(filePath, m.error.id);
+      m.resolved = true;
     }
+    this.markStore.notify(filePath);
+
     cm.dispatch({ changes });
     for (const m of validMarks) {
       this.errorBook.appendError(m.error);
     }
-    // Recheck: pass empty replaceIds since all sentence marks were already removed
+    // Recheck seamless: clearSentenceMarks skips resolved marks, so they
+    // survive the recheck and are revivable on undo.
     this.dispatcher.recheckAroundSeamless(
       filePath,
       changes[changes.length - 1].from + changes[changes.length - 1].insert.length,

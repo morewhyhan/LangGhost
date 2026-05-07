@@ -9,8 +9,10 @@ Types:
 - translation: Chinese text → English
 
 Rules:
-- Any Chinese character → type "translation", provide English
+- Return ONE error per distinct problem. Split grammar and translation into separate errors.
+- Any Chinese character → type "translation", provide English. Always a separate error from grammar.
 - Check every English fragment; short ones often hide errors (e.g. "I from", "very like", "he don't")
+- "original" must be the exact substring from the input. Chinese: exact Chinese chars. English: exact English word(s).
 - explanation ≤15 Chinese chars (e.g. "过去时")
 - context ≈20 surrounding chars
 - no errors → return []

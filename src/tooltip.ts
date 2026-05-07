@@ -10,6 +10,10 @@ const TYPE_LABELS: Record<string, string> = {
   grammar: '语法', spelling: '拼写', expression: '表达', translation: '翻译',
 };
 
+const BAR_COLORS: Record<string, string> = {
+  grammar: '#e55', spelling: '#68f', expression: '#c90', translation: '#4a4',
+};
+
 /** Build the fully corrected sentence by applying all marks' fixes. */
 function buildCorrectedSentence(original: string, marks: ErrorMark[]): string {
   const patches = marks.map(m => ({
@@ -17,7 +21,6 @@ function buildCorrectedSentence(original: string, marks: ErrorMark[]): string {
     len: m.error.original.length,
     text: m.error.corrected,
   }));
-  // Sort right-to-left so replacements don't shift earlier positions
   patches.sort((a, b) => b.pos - a.pos);
   let result = original;
   for (const p of patches) {
@@ -43,9 +46,10 @@ export function createTooltipExtension(
       const mark = marks.find(m => pos >= m.from && pos < m.to);
       if (!mark) return null;
 
-      // Get all marks in the same sentence for the preview
       const sentenceMarks = marks.filter(m => m.sentenceFrom === mark.sentenceFrom);
       const correctedSentence = buildCorrectedSentence(mark.error.sentence, sentenceMarks);
+      const type = mark.error.type?.toLowerCase() || 'grammar';
+      const barColor = BAR_COLORS[type] || BAR_COLORS.grammar;
 
       return {
         pos: mark.from,
@@ -54,6 +58,56 @@ export function createTooltipExtension(
           const plugin = view.state.field(pluginField);
           const dom = document.createElement('div');
           dom.className = 'langghost-tooltip';
+
+          // Left color bar
+          const bar = document.createElement('div');
+          bar.className = 'langghost-tooltip-bar';
+          bar.style.backgroundColor = barColor;
+          dom.appendChild(bar);
+
+          // Content wrapper
+          const content = document.createElement('div');
+          content.className = 'langghost-tooltip-content';
+
+          // Type badge + explanation on one line
+          const header = document.createElement('div');
+          header.className = 'langghost-tooltip-header';
+
+          const typeBadge = document.createElement('span');
+          typeBadge.className = `langghost-tooltip-type langghost-tooltip-type-${type}`;
+          typeBadge.textContent = TYPE_LABELS[type] || type;
+          header.appendChild(typeBadge);
+
+          const explainLabel = document.createElement('span');
+          explainLabel.className = 'langghost-tooltip-explain';
+          explainLabel.textContent = mark.error.explanation || '';
+          header.appendChild(explainLabel);
+          content.appendChild(header);
+
+          // Fix line: original → corrected
+          const fix = document.createElement('div');
+          fix.className = 'langghost-fix';
+          const origSpan = document.createElement('span');
+          origSpan.className = 'langghost-fix-original';
+          origSpan.textContent = mark.error.original;
+          const arrSpan = document.createElement('span');
+          arrSpan.className = 'langghost-fix-arrow';
+          arrSpan.textContent = ' → ';
+          const corrSpan = document.createElement('span');
+          corrSpan.className = 'langghost-fix-corrected';
+          corrSpan.textContent = mark.error.corrected || '[需翻译]';
+          fix.appendChild(origSpan);
+          fix.appendChild(arrSpan);
+          fix.appendChild(corrSpan);
+          content.appendChild(fix);
+
+          // Alternatives
+          if (mark.error.alternatives && mark.error.alternatives.length > 0) {
+            const alt = document.createElement('div');
+            alt.className = 'langghost-alt';
+            alt.textContent = '或: ' + mark.error.alternatives.join(', ');
+            content.appendChild(alt);
+          }
 
           // Sentence preview: original → corrected (only if there are changes)
           if (correctedSentence !== mark.error.sentence) {
@@ -71,28 +125,8 @@ export function createTooltipExtension(
             preview.appendChild(originalLine);
             preview.appendChild(arrow);
             preview.appendChild(correctedLine);
-            dom.appendChild(preview);
+            content.appendChild(preview);
           }
-
-          // Fix line: original → corrected
-          const fix = document.createElement('div');
-          fix.className = 'langghost-fix';
-          fix.textContent = `${mark.error.original} → ${mark.error.corrected || '[需翻译]'}`;
-          dom.appendChild(fix);
-
-          // Alternatives
-          if (mark.error.alternatives && mark.error.alternatives.length > 0) {
-            const alt = document.createElement('div');
-            alt.className = 'langghost-alt';
-            alt.textContent = '或: ' + mark.error.alternatives.join(', ');
-            dom.appendChild(alt);
-          }
-
-          // Explanation
-          const explain = document.createElement('div');
-          explain.className = 'langghost-explain';
-          explain.textContent = mark.error.explanation || TYPE_LABELS[mark.error.type?.toLowerCase()] || mark.error.type;
-          dom.appendChild(explain);
 
           // Actions
           const actions = document.createElement('div');
@@ -106,6 +140,10 @@ export function createTooltipExtension(
           applyBtn.disabled = !hasCorrection;
           if (hasCorrection) {
             applyBtn.addEventListener('click', () => {
+              // Fade tooltip out immediately — CM6 will clean up the DOM
+              // on the next re-evaluation.
+              dom.style.opacity = '0';
+              dom.style.transition = 'opacity 80ms';
               plugin.applyFix(filePath, mark.error.id);
             });
           }
@@ -114,6 +152,8 @@ export function createTooltipExtension(
           applyAllBtn.className = 'langghost-apply-all';
           applyAllBtn.textContent = '应用整句';
           applyAllBtn.addEventListener('click', () => {
+            dom.style.opacity = '0';
+            dom.style.transition = 'opacity 80ms';
             plugin.applyAllInSentence(filePath, mark.sentenceFrom);
           });
 
@@ -121,13 +161,17 @@ export function createTooltipExtension(
           ignoreBtn.className = 'langghost-ignore';
           ignoreBtn.textContent = '忽略';
           ignoreBtn.addEventListener('click', () => {
+            dom.style.opacity = '0';
+            dom.style.transition = 'opacity 80ms';
             markStore.ignore(filePath, mark.error.id);
           });
 
           actions.appendChild(applyBtn);
           actions.appendChild(applyAllBtn);
           actions.appendChild(ignoreBtn);
-          dom.appendChild(actions);
+          content.appendChild(actions);
+
+          dom.appendChild(content);
 
           return { dom };
         },

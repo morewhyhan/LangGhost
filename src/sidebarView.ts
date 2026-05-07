@@ -28,6 +28,8 @@ export class LangGhostSidebarView extends ItemView {
   private lastFilePath: string | null = null;
   /** Files that have been checked at least once (by typing or scan). */
   private checkedFiles: Set<string> = new Set();
+  /** Error IDs seen in the last refresh, for fresh-item animation tracking. */
+  private lastErrorIds: Set<string> = new Set();
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -69,7 +71,7 @@ export class LangGhostSidebarView extends ItemView {
 
     // Hint for first-time users
     this.hintEl = container.createDiv({ cls: 'langghost-sidebar-hint' });
-    this.hintEl.textContent = '写英文句子，以 . ? ! 结尾即可自动检查';
+    this.hintEl.textContent = '以 . ? ! 结尾自动触发检查';
 
     this.emptyEl = container.createDiv({ cls: 'langghost-sidebar-empty' });
     this.emptyEl.textContent = '没有发现错误';
@@ -117,6 +119,7 @@ export class LangGhostSidebarView extends ItemView {
     if (!cm) return;
 
     this.checkedFiles.add(filePath);
+    this.scanBtn.classList.add('langghost-scanning');
     this.scanBtn.textContent = '检查中...';
     this.scanBtn.disabled = true;
 
@@ -125,6 +128,7 @@ export class LangGhostSidebarView extends ItemView {
     // Show count feedback, then restore button after results start coming in
     this.scanBtn.textContent = `已检查 ${count} 句`;
     setTimeout(() => {
+      this.scanBtn.classList.remove('langghost-scanning');
       this.scanBtn.textContent = '检查全文';
       this.scanBtn.disabled = false;
       this.requestRefresh();
@@ -134,13 +138,13 @@ export class LangGhostSidebarView extends ItemView {
   private refresh(): void {
     const filePath = this.getActiveFilePath();
     if (!filePath) {
-      this.showEmpty('打开一个 Markdown 文件即可开始');
+      this.showEmpty('langghost-empty-no-file', '打开文件即可开始');
       this.scanBtn.style.display = 'none';
       this.hintEl.style.display = 'none';
       return;
     }
     if (!this.plugin.settings.enabled) {
-      this.showEmpty('LangGhost: 检查已禁用');
+      this.showEmpty('langghost-empty-disabled', '检查已禁用');
       this.scanBtn.style.display = 'none';
       this.hintEl.style.display = 'none';
       return;
@@ -151,11 +155,16 @@ export class LangGhostSidebarView extends ItemView {
       this.checkedFiles.add(filePath);
     }
 
+    // Track new error IDs for fresh-item animation
+    const currentIds = new Set(marks.map(m => m.error.id));
+    const newIds = new Set([...currentIds].filter(id => !this.lastErrorIds.has(id)));
+    this.lastErrorIds = currentIds;
+
     if (marks.length === 0) {
       if (this.checkedFiles.has(filePath)) {
-        this.showEmpty('没有发现错误');
+        this.showEmpty('langghost-empty-none', '没有发现错误');
       } else {
-        this.showEmpty('输入英文句子，以 . ? ! 结尾自动检查');
+        this.showEmpty('langghost-empty-idle', '输入英文，句号结尾自动检查');
         this.hintEl.style.display = 'none';
       }
       this.scanBtn.style.display = 'block';
@@ -173,18 +182,20 @@ export class LangGhostSidebarView extends ItemView {
 
     this.emptyEl.style.display = 'none';
     this.hintEl.style.display = 'none';
-    this.listEl.style.display = 'block';
+    this.listEl.style.display = 'flex';
     this.listEl.empty();
     this.scanBtn.style.display = 'block';
 
     for (const [sentenceFrom, groupMarks] of sortedGroups) {
       groupMarks.sort((a, b) => a.from - b.from);
-      this.listEl.appendChild(this.createSentenceGroup(sentenceFrom, groupMarks, filePath));
+      this.listEl.appendChild(
+        this.createSentenceGroup(sentenceFrom, groupMarks, filePath, newIds)
+      );
     }
   }
 
   /** Create a collapsible sentence group: header with text + apply-all, then error items. */
-  private createSentenceGroup(sentenceFrom: number, marks: ErrorMark[], filePath: string): HTMLElement {
+  private createSentenceGroup(sentenceFrom: number, marks: ErrorMark[], filePath: string, newIds: Set<string>): HTMLElement {
     const group = document.createElement('div');
     group.className = 'langghost-sentence-group';
 
@@ -223,7 +234,7 @@ export class LangGhostSidebarView extends ItemView {
     errorList.className = 'langghost-sentence-errors';
 
     for (const mark of marks) {
-      errorList.appendChild(this.createErrorItem(mark, filePath));
+      errorList.appendChild(this.createErrorItem(mark, filePath, newIds.has(mark.error.id)));
     }
 
     // Toggle collapse
@@ -240,9 +251,9 @@ export class LangGhostSidebarView extends ItemView {
   }
 
   /** Create a single error item inside a sentence group. */
-  private createErrorItem(mark: ErrorMark, filePath: string): HTMLElement {
+  private createErrorItem(mark: ErrorMark, filePath: string, isNew: boolean): HTMLElement {
     const item = document.createElement('div');
-    item.className = 'langghost-error-item';
+    item.className = isNew ? 'langghost-error-item langghost-error-fresh' : 'langghost-error-item';
 
     // Fix line: original → corrected
     const fix = document.createElement('div');
@@ -350,8 +361,9 @@ export class LangGhostSidebarView extends ItemView {
     cm.focus();
   }
 
-  private showEmpty(msg?: string): void {
+  private showEmpty(state: string, msg?: string): void {
     this.emptyEl.textContent = msg ?? '没有发现错误';
+    this.emptyEl.className = `langghost-sidebar-empty langghost-empty-${state}`;
     this.emptyEl.style.display = 'block';
     this.listEl.style.display = 'none';
   }
