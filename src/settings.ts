@@ -68,6 +68,18 @@ export class LangGhostSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl)
+      .setName('Auto-scan on file open')
+      .setDesc('Automatically check existing text when opening a file. May incur AI cost.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.autoScan)
+          .onChange(async (value) => {
+            this.plugin.settings.autoScan = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
     // Cost estimate
     const model = this.plugin.settings.model || DEFAULT_SETTINGS.model;
     const isHaiku = model.toLowerCase().includes('haiku');

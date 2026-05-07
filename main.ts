@@ -62,9 +62,10 @@ export default class LangGhostPlugin extends Plugin {
     // Restore ignored state on startup (must be before any addMarks calls)
     await this.persistence.restore();
 
-    // Connect markStore changes to persistence + force decoration rebuild
+    // Connect markStore changes to persistence + force decoration rebuild + status bar
     this.markStore.addListener((filePath: string) => {
       this.persistence.scheduleSave();
+      this.updateStatusCount(filePath);
       // Use setTimeout(0) instead of queueMicrotask to avoid racing with
       // CM6 update cycle — queueMicrotask can dispatch while the current
       // update is still flushing, causing position desync.
@@ -109,36 +110,54 @@ export default class LangGhostPlugin extends Plugin {
       createTooltipExtension(markStoreField, dispatcherField, pluginField),
     ]);
 
-    // Keyboard shortcut: apply fix at cursor
+    // Keyboard shortcut: apply fix, cycling through errors.
+    // Flow: type '.' → see errors → press Ctrl+. repeatedly to fix each one.
+    // After each fix the sentence is rechecked so remaining marks stay valid.
     this.addCommand({
       id: 'apply-fix',
-      name: 'LangGhost: Apply fix at cursor',
+      name: 'LangGhost: Fix nearest error',
+      hotkeys: [{ modifiers: ['Mod'], key: '.' }],
       editorCallback: (_editor, view) => {
         if (!view.file) return;
         const cm = (view.editor as any).cm as EditorView;
         if (!cm) return;
         const pos = cm.state.selection.main.head;
         const marks = this.markStore.getMarks(view.file.path);
-        // Find mark whose range contains or is nearest to cursor
-        const mark = marks.find(m => pos >= m.from && pos <= m.to);
+        // Priority: containing cursor → nearest before → nearest after
+        let mark = marks.find(m => pos > m.from && pos < m.to);
+        if (!mark) {
+          const before = marks.filter(m => m.to <= pos);
+          mark = before.length ? before.reduce((a, b) => a.to > b.to ? a : b) : undefined;
+        }
+        if (!mark) {
+          const after = marks.filter(m => m.from >= pos);
+          mark = after.length ? after.reduce((a, b) => a.from < b.from ? a : b) : undefined;
+        }
         if (mark) {
           this.applyFix(view.file.path, mark.error.id);
+          // Recheck sentence so remaining errors are re-evaluated
+          this.dispatcher.recheckAround(view.file.path, Math.max(0, mark.from - 1), cm.state.doc);
+        } else {
+          this.statusBarEl.setText(
+            this.linter.isReady() ? 'No errors at cursor' : 'LangGhost loading...'
+          );
+          setTimeout(() => this.updateStatusCount(view.file!.path), 1500);
         }
       },
     });
 
-    // Keyboard shortcut: apply all fixes in current sentence
+    // Keyboard shortcut: apply all fixes in current sentence at once
     this.addCommand({
       id: 'apply-sentence',
-      name: 'LangGhost: Apply all fixes in sentence',
+      name: 'LangGhost: Fix all in sentence',
+      hotkeys: [{ modifiers: ['Mod', 'Shift'], key: '.' }],
       editorCallback: (_editor, view) => {
         if (!view.file) return;
         const cm = (view.editor as any).cm as EditorView;
         if (!cm) return;
         const pos = cm.state.selection.main.head;
         const marks = this.markStore.getMarks(view.file.path);
-        // Find the mark at or nearest to cursor, get its sentence
-        const mark = marks.find(m => pos >= m.from && pos <= m.to);
+        const mark = marks.find(m => pos >= m.sentenceFrom && pos < m.sentenceTo);
         if (mark) {
           this.applyAllInSentence(view.file.path, mark.sentenceFrom);
         }
@@ -192,9 +211,11 @@ export default class LangGhostPlugin extends Plugin {
       }
     });
 
+    // Track files that have been auto-scanned to avoid re-scanning on every tab switch
+    const autoScanned = new Set<string>();
+
     // Restore marks from persistence when a file is opened / becomes active,
-    // and force a decoration + sidebar refresh.  This covers tab switches,
-    // quick-switcher, search clicks, and split-pane focus changes.
+    // and auto-scan if the file hasn't been checked yet.
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', (leaf) => {
         if (!leaf) return;
@@ -202,23 +223,24 @@ export default class LangGhostPlugin extends Plugin {
         if (view instanceof MarkdownView && view.file) {
           const filePath = view.file.path;
           const cm = (view.editor as any).cm as EditorView;
-          // Only restore if we have NO raw marks at all for this file.
-          // Use hasMarks() (unfiltered) — NOT getMarks() which filters
-          // ignored marks and would trigger false restores + duplicates.
           if (!this.markStore.hasMarks(filePath)) {
             const docText = cm?.state?.doc?.toString() ?? '';
             if (docText) {
               this.persistence.restoreFile(filePath, docText).then((marks) => {
                 if (marks.length > 0) {
                   this.markStore.addMarks(filePath, marks);
+                } else if (this.settings.autoScan && !autoScanned.has(filePath)) {
+                  // Auto-scan on first open (limit 10 sentences to avoid cost)
+                  autoScanned.add(filePath);
+                  this.dispatcher.scanFile(filePath, cm.state.doc, 10);
                 }
               });
             }
           }
-          // Force decoration rebuild for the newly active editor
           if (cm) {
             cm.dispatch({ effects: markStoreChangedEffect.of() });
           }
+          this.updateStatusCount(filePath);
         }
       })
     );
@@ -251,6 +273,7 @@ export default class LangGhostPlugin extends Plugin {
     const to = Math.min(mark.to, doc.length);
     if (from >= to) return false;
     if (doc.sliceString(from, to) !== mark.error.original) return false;
+    if (!mark.error.corrected) return false; // e.g. pure-Chinese translation mark
 
     this.markStore.removeMark(filePath, mark.error.id);
 
@@ -282,6 +305,7 @@ export default class LangGhostPlugin extends Plugin {
       const t = Math.min(m.to, doc.length);
       if (f >= t) continue;
       if (doc.sliceString(f, t) !== m.error.original) continue;
+      if (!m.error.corrected) continue; // e.g. pure-Chinese translation mark
       changes.push({ from: f, to: t, insert: m.error.corrected });
       validMarks.push(m);
     }
@@ -304,6 +328,19 @@ export default class LangGhostPlugin extends Plugin {
       []
     );
     return true;
+  }
+
+  /** Update status bar with error count for a file. */
+  updateStatusCount(filePath: string): void {
+    // Only update if filePath matches the active editor
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!activeView?.file || activeView.file.path !== filePath) return;
+    const count = this.markStore.getMarks(filePath).length;
+    if (count > 0) {
+      this.statusBarEl.setText(`LangGhost: ${count} error${count > 1 ? 's' : ''}`);
+    } else {
+      this.statusBarEl.setText('');
+    }
   }
 
   /** Get the CM6 EditorView for a given file path. */

@@ -262,72 +262,64 @@ await runHarperTests();
 // ══════════════════════════════════════════════════════════════════
 
 const API_KEY = 'REDACTED_API_KEY';
-const API_ENDPOINT = 'https://api.deepseek.com/anthropic/v1/messages';
-const MODEL = 'deepseek-v4-pro[1m]';
+const API_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
+const MODEL = 'deepseek-chat';
 
-function buildPrompt(sentence) {
-  return `You are an expert English grammar checker. The user is a Chinese speaker who mixes Chinese and English in their writing.
+const SYSTEM_PROMPT = `You are an English writing assistant. Find English errors; translate any Chinese.
 
-CRITICAL: Focus on ENGLISH grammar errors FIRST. Check every English word fragment carefully, even short ones surrounded by Chinese. Common mistakes:
-- Wrong verb forms: "I go"→"I went", "he don't"→"he doesn't", "I from"→"I've been from"
-- Missing verbs: "I from" needs a verb, "it too expensive"→"it's too expensive"
-- Wrong parts of speech: "discussion about"→"discuss", "can able"→"can"
-- Tense/aspect: "have went"→"have been/went", "will going"→"will go"
-- Double comparatives: "more better"→"better"
-- Passive voice: "is schedule"→"is scheduled"
-
-Error types:
-1. Grammar errors (tense, agreement, missing verbs, wrong forms) → type: "grammar"
-2. Spelling errors → type: "spelling"
-3. Expression suggestions (correct but unnatural) → type: "expression"
-4. Chinese that should be English → type: "translation"
+Types:
+- spelling: wrong letters (recieve→receive)
+- grammar: wrong tense, agreement, article, preposition, verb form
+- expression: awkward or wordy
+- translation: Chinese text → English
 
 Rules:
-- Keep explanations under 15 Chinese characters, state the grammar rule only
-- Check EACH English fragment independently — a 2-word fragment like "I from" can still be wrong
-- Do NOT flag correct English (e.g. "learning programming" is correct)
-- If no errors, return empty array
+- Any Chinese character → type "translation", provide English
+- Check every English fragment; short ones often hide errors (e.g. "I from", "very like", "he don't")
+- explanation ≤15 Chinese chars (e.g. "过去时")
+- context ≈20 surrounding chars
+- no errors → return []
+- output JSON: one object per error [{"original":"…","corrected":"…","type":"…","explanation":"…","context":"…"}]`;
 
-Return strict JSON array:
-[
-  {
-    "original": "error text",
-    "corrected": "correction",
-    "alternatives": ["other options"],
-    "context": "surrounding text",
-    "type": "grammar|spelling|expression|translation",
-    "explanation": "under 15 chars in Chinese"
-  }
-]
+const TRANSLATE_PROMPT = `Translate this Chinese text to English.
+Return JSON: [{"original":"<Chinese>","corrected":"<English>","type":"translation","explanation":"翻译","context":"<Chinese>"}]`;
 
-Sentence:
-${sentence}`;
+function buildPrompt(sentence) {
+  return SYSTEM_PROMPT + '\n\nSentence:\n' + sentence;
 }
 
 function parseJSON(text) {
-  try { return JSON.parse(text); } catch {}
+  try { const p = JSON.parse(text); if (Array.isArray(p)) return p; if (p && typeof p === 'object') return [p]; return null; } catch {}
   const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (m) try { return JSON.parse(m[1]); } catch {}
+  if (m) try { const p = JSON.parse(m[1]); if (Array.isArray(p)) return p; if (p && typeof p === 'object') return [p]; } catch {}
   const a = text.match(/\[[\s\S]*\]/);
   if (a) try { return JSON.parse(a[0]); } catch {}
   return null;
 }
 
 async function checkLLM(sentence) {
+  // Replicate production logic: pure Chinese uses translation-only prompt
+  const isPureChinese = !/[a-zA-Z]/.test(sentence) && /[\u4e00-\u9fff]/.test(sentence);
+  const systemPrompt = isPureChinese ? TRANSLATE_PROMPT : SYSTEM_PROMPT;
+  const userContent = isPureChinese ? `Sentence: ${sentence}` : sentence;
+
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 25000);
   try {
     const res = await fetch(API_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1024, messages: [{ role: 'user', content: buildPrompt(sentence) }] }),
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: MODEL, max_tokens: 1024, temperature: 0, messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent }
+      ] }),
       signal: controller.signal,
     });
     clearTimeout(tid);
     if (!res.ok) return { error: `HTTP ${res.status}: ${await res.text().catch(() => '')}` };
     const data = await res.json();
-    const tb = data.content?.find(b => b.type === 'text');
-    return { corrections: parseJSON(tb?.text ?? '') || [] };
+    const content = data.choices?.[0]?.message?.content ?? '';
+    return { corrections: parseJSON(content) || [] };
   } catch (e) { clearTimeout(tid); return { error: e.message }; }
 }
 
@@ -392,6 +384,20 @@ async function runLLMTests() {
     { s: 'Neither the teacher nor the students were present.', err: false, cat: 'E' },
     { s: 'She is one of the best players on the team.', err: false, cat: 'E' },
     { s: 'I look forward to hearing from you soon.', err: false, cat: 'E' },
+
+    // F: Pure Chinese — must flag as translation (was the bug: "全中文不检查")
+    { s: '你好。', err: true, cat: 'F', hint: '纯中文 → translation' },
+    { s: '今天天气很好。', err: true, cat: 'F', hint: '纯中文 → translation' },
+    { s: '我喜欢学习编程。', err: true, cat: 'F', hint: '纯中文 → translation' },
+    { s: '这个问题需要解决。', err: true, cat: 'F', hint: '纯中文 → translation' },
+    { s: '明天开会讨论方案。', err: true, cat: 'F', hint: '纯中文 → translation' },
+    { s: '检查全文.', err: true, cat: 'F', hint: '纯中文+ASCII句号 → translation' },
+    { s: '检查全文。', err: true, cat: 'F', hint: '纯中文+CJK句号 → translation' },
+
+    // G: Multiple error types in one sentence — must be split
+    { s: 'I kile 苹果.', err: true, cat: 'G', hint: 'kile→like (spelling) + 苹果→apple (translation), ≥2 errors' },
+    { s: 'I recieve 你的消息 yesterday.', err: true, cat: 'G', hint: 'recieve→receive (spelling) + 你的消息→your message (translation), ≥2 errors' },
+    { s: 'He go to 学校 everyday.', err: true, cat: 'G', hint: 'go→goes (grammar) + 学校→school (translation), ≥2 errors' },
   ];
 
   section('4. LLM (DeepSeek) comprehensive tests');
@@ -419,7 +425,7 @@ async function runLLMTests() {
 
   // Report by category
   const cats = [...new Set(tests.map(t => t.cat))];
-  const catNames = { A: 'Mixed Chinese-English errors', B: 'Pure English grammar', C: 'Spelling', D: 'Expression/style', E: 'Correct (no false positives)' };
+  const catNames = { A: 'Mixed Chinese-English errors', B: 'Pure English grammar', C: 'Spelling', D: 'Expression/style', E: 'Correct (no false positives)', F: 'Pure Chinese → translation', G: 'Split errors (multi-type)' };
 
   for (const cat of cats) {
     console.log(`\n  [${cat}: ${catNames[cat]}]`);
@@ -432,7 +438,12 @@ async function runLLMTests() {
       const found = r.corrections.length > 0;
       const short = r.s.length > 45 ? r.s.substring(0, 42) + '...' : r.s;
       if (r.err) {
-        assert(found, `LLM [${cat}]: "${short}" → ${found ? r.corrections.map(c => `${c.original}→${c.corrected}`).join(', ') : 'MISSED'}`);
+        // For split-error tests, also verify ≥2 corrections
+        if (r.cat === 'G') {
+          assert(found && r.corrections.length >= 2, `LLM [${cat}]: "${short}" → ${r.corrections.length} errors (need ≥2): ${r.corrections.map(c => `${c.original}→${c.corrected}`).join(', ')}`);
+        } else {
+          assert(found, `LLM [${cat}]: "${short}" → ${found ? r.corrections.map(c => `${c.original}→${c.corrected}`).join(', ') : 'MISSED'}`);
+        }
         if (!found) console.log(`       expected: ${r.hint}`);
       } else {
         assert(!found, `LLM [${cat}]: "${short}" → ${found ? 'FALSE POS: ' + r.corrections.map(c => c.original).join(', ') : 'OK'}`);

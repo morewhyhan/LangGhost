@@ -47,6 +47,7 @@ export interface LangGhostSettings {
   model: string;
   errorBookPath: string;
   enabled: boolean;
+  autoScan: boolean;
   firstRun: boolean;
 }
 
@@ -56,6 +57,7 @@ export const DEFAULT_SETTINGS: LangGhostSettings = {
   model: 'deepseek-chat',
   errorBookPath: 'LangGhost/errors.md',
   enabled: true,
+  autoScan: false,
   firstRun: true,
 };
 

@@ -1,20 +1,23 @@
 import type { ErrorItem, LangGhostSettings, AICorrection } from './types';
 
-const SYSTEM_PROMPT = `You are an English grammar checker for Chinese speakers. Find ALL errors in the sentence.
+const SYSTEM_PROMPT = `You are an English writing assistant. Find English errors; translate any Chinese.
 
-CRITICAL — classify each error into ONE of these types:
-- "spelling": misspelled word (wrong letters). Examples: "recieve"→"receive", "teh"→"the", "writen"→"written"
-- "grammar": tense, agreement, verb form, article, preposition, pronoun, word order, redundancy. Examples: "he go"→"he goes", "can able"→"can", "I has"→"I have"
-- "expression": correct grammar but wordy, awkward, or unnatural. Examples: "make a discussion"→"discuss", "at this point in time"→"now", "in my opinion I think"→"I think"
-- "translation": Chinese text that should be written in English. Provide the English translation as "corrected".
+Types:
+- spelling: wrong letters (recieve→receive)
+- grammar: wrong tense, agreement, article, preposition, verb form
+- expression: awkward or wordy
+- translation: Chinese text → English
 
-RULES:
-- If you see Chinese characters mixed in, classify as "translation".
-- Spelling errors are ONLY about wrong letters. Verb form errors (writed→wrote) are "grammar".
-- Explain in ≤15 Chinese chars, state only the rule (e.g. "过去时" not "你描述的是过去所以用过去时").
-- Include "context" (≈20 chars of surrounding text).
-- If no errors, return [].
-- Return ONLY a JSON array, no other text.`;
+Rules:
+- Any Chinese character → type "translation", provide English
+- Check every English fragment; short ones often hide errors (e.g. "I from", "very like", "he don't")
+- explanation ≤15 Chinese chars (e.g. "过去时")
+- context ≈20 surrounding chars
+- no errors → return []
+- output JSON: one object per error [{"original":"…","corrected":"…","type":"…","explanation":"…","context":"…"}]`;
+
+const TRANSLATE_PROMPT = `Translate this Chinese text to English.
+Return JSON: [{"original":"<Chinese>","corrected":"<English>","type":"translation","explanation":"翻译","context":"<Chinese>"}]`;
 
 export class AIChecker {
   private getSettings: () => LangGhostSettings;
@@ -29,8 +32,12 @@ export class AIChecker {
   }
 
   async check(text: string): Promise<ErrorItem[]> {
+    // Pure Chinese with no English: use translation-only prompt to avoid
+    // the model misinterpreting imperative phrases (e.g. "检查全文") as commands.
     const settings = this.getSettings();
     if (!settings.apiKey) return [];
+    const isPureChinese = !/[a-zA-Z]/.test(text) && /[\u4e00-\u9fff]/.test(text);
+    const systemPrompt = isPureChinese ? TRANSLATE_PROMPT : SYSTEM_PROMPT;
 
     this.onStatusChange('AI checking...');
     const startTime = Date.now();
@@ -51,10 +58,11 @@ export class AIChecker {
         },
         body: JSON.stringify({
           model: settings.model,
-          max_tokens: 256,
+          max_tokens: 1024,
+          temperature: 0,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: text },
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: isPureChinese ? `Sentence: ${text}` : text },
           ],
         }),
         signal: controller.signal,
@@ -120,7 +128,10 @@ export class AIChecker {
 
 function parseJSON(text: string): AICorrection[] | null {
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') return [parsed];
+    return null;
   } catch {
     const match = text.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (match) {
