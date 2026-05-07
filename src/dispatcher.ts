@@ -100,8 +100,7 @@ export class Dispatcher {
 
   private async runRecheck(sentence: SentenceRange, filePath: string, replaceIds: string[]): Promise<void> {
     try {
-      // Phase 1: Local lint — collect results, do NOT add to store yet
-      // (adding now would conflict with old marks still in the store)
+      // Phase 1: Local lint
       let localMarks: ErrorMark[] = [];
       if (this.linter.isReady()) {
         try {
@@ -117,14 +116,12 @@ export class Dispatcher {
       // Phase 2: AI check
       const settings = this.getSettings();
       if (!settings.apiKey) {
-        // No AI: atomically swap old marks for local marks
         this.markStore.replaceMarks(filePath, replaceIds, localMarks);
         return;
       }
 
       const aiErrors = await this.enqueueAI(() => this.checker.check(sentence.text));
 
-      // Atomically replace old sentence marks with AI results (or local fallback)
       if (aiErrors.length > 0) {
         const aiMarks = errorsToMarks(aiErrors, sentence);
         this.markStore.replaceMarks(filePath, replaceIds, aiMarks);

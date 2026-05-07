@@ -14,24 +14,29 @@ export class LangGhostSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'LangGhost Settings' });
+    containerEl.createEl('h2', { text: 'LangGhost' });
+
+    // ── AI Settings ──────────────────────────────────────
+    containerEl.createEl('h3', { text: 'AI 设置' });
 
     new Setting(containerEl)
       .setName('API Key')
-      .setDesc('Your AI API key. Leave empty to use local checking only.')
-      .addText((text) =>
-        text
-          .setPlaceholder('sk-...')
-          .setValue(this.plugin.settings.apiKey)
+      .setDesc('DeepSeek 或 OpenAI 兼容 API 的 Key。留空则仅使用本地检查。')
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text.inputEl.placeholder = 'sk-...';
+        text.setValue(this.plugin.settings.apiKey)
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value;
             await this.plugin.saveSettings();
-          })
-      );
+            // Refresh the whole settings to update cost card
+            this.display();
+          });
+      });
 
     new Setting(containerEl)
       .setName('API Endpoint')
-      .setDesc('Custom API endpoint URL.')
+      .setDesc('支持任何 OpenAI 兼容 API 地址。会自动拼接 /chat/completions。')
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.apiEndpoint)
@@ -44,7 +49,7 @@ export class LangGhostSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Model')
-      .setDesc('AI model to use.')
+      .setDesc('模型名称，如 deepseek-chat、gpt-4o-mini 等。')
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.model)
@@ -55,9 +60,12 @@ export class LangGhostSettingTab extends PluginSettingTab {
           })
       );
 
+    // ── Behavior ─────────────────────────────────────────
+    containerEl.createEl('h3', { text: '行为' });
+
     new Setting(containerEl)
       .setName('Error Book Path')
-      .setDesc('Path to the error book markdown file in your vault.')
+      .setDesc('错题本在 Vault 中的路径，修正记录会自动追加到此文件。')
       .addText((text) =>
         text
           .setPlaceholder(DEFAULT_SETTINGS.errorBookPath)
@@ -70,7 +78,7 @@ export class LangGhostSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Auto-scan on file open')
-      .setDesc('Automatically check existing text when opening a file. May incur AI cost.')
+      .setDesc('打开文件时自动检查已有文本（前 10 句）。会产生 AI 费用。')
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.autoScan)
@@ -80,15 +88,26 @@ export class LangGhostSettingTab extends PluginSettingTab {
           })
       );
 
-    // Cost estimate
-    const model = this.plugin.settings.model || DEFAULT_SETTINGS.model;
-    const isHaiku = model.toLowerCase().includes('haiku');
-    const costEstimate = isHaiku
-      ? '~$1-2/month (daily diary with Claude Haiku)'
-      : '~$5-10/month (daily diary with ' + model + ')';
+    // ── About ────────────────────────────────────────────
+    containerEl.createEl('h3', { text: '关于' });
 
-    new Setting(containerEl)
-      .setName('Estimated Cost')
-      .setDesc(costEstimate);
+    // Cost estimate card
+    const hasKey = !!this.plugin.settings.apiKey;
+    const model = this.plugin.settings.model || DEFAULT_SETTINGS.model;
+    const costCard = containerEl.createDiv({ cls: 'langghost-cost-card' });
+
+    const costIcon = costCard.createSpan({ cls: 'langghost-cost-icon' });
+    costIcon.textContent = hasKey ? '💡' : '⚠️';
+
+    const costText = costCard.createDiv({ cls: 'langghost-cost-text' });
+    if (hasKey) {
+      costText.textContent = `每日写日记，预估 $1-5/月（${model}）`;
+    } else {
+      costText.textContent = '未配置 API Key，仅使用本地检查（拼写 + 基础语法）。填写 Key 后可启用 AI 表达建议和中译英。';
+    }
+
+    // Version info
+    const versionInfo = containerEl.createDiv({ cls: 'langghost-version' });
+    versionInfo.textContent = `LangGhost v${this.plugin.manifest.version}`;
   }
 }

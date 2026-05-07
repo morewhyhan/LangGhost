@@ -65,18 +65,20 @@ export function createDecorationsExtension(
 
     /** Check marks near the change region against the post-change document.
      *  If the text at a mark's mapped position no longer matches the original,
-     *  the user edited it → remove the mark, record to error book, recheck. */
+     *  the user edited it → remove the mark, record to error book, recheck.
+     *
+     *  Resolved marks: if the text now matches the original again (user undid
+     *  a fix), un-resolve the mark so the error reappears. */
     private validateMarks(update: ViewUpdate) {
       const markStore = update.state.field(markStoreField);
       const info = update.state.field(editorInfoField);
       const filePath = (info as any).file?.path;
       if (!filePath) return;
 
-      const marks = markStore.getMarks(filePath);
+      // Use unfiltered to include resolved marks (for undo detection)
+      const allMarks = markStore.getAllMarksUnfiltered(filePath);
       const doc = update.state.doc;
 
-      // Collect the changed regions in the post-change coordinate system
-      // so we only validate marks that are near a change (not ALL marks).
       const changedRanges: { from: number; to: number }[] = [];
       update.changes.iterChanges((_fromA, _toA, fromB, toB) => {
         changedRanges.push({ from: fromB, to: toB });
@@ -85,10 +87,9 @@ export function createDecorationsExtension(
       const toRemove: string[] = [];
       const plugin = update.state.field(pluginField);
       const dispatcher = update.state.field(dispatcherField);
-      // Dedup rechecks by sentence start — only recheck each sentence once
       const pendingRechecks: Map<number, SentenceRange> = new Map();
 
-      for (const mark of marks) {
+      for (const mark of allMarks) {
         const nearChange = changedRanges.some(
           r => mark.from <= r.to && mark.to >= r.from
         );
@@ -101,11 +102,31 @@ export function createDecorationsExtension(
           continue;
         }
         const currentText = doc.sliceString(from, to);
-        if (currentText !== mark.error.original) {
-          toRemove.push(mark.error.id);
-          plugin.errorBook.appendError(mark.error);
 
-          // Collect recheck (dedup by sentenceFrom, skip when disabled)
+        if (mark.resolved) {
+          // Resolved mark: if user undid the fix (text matches original again),
+          // un-resolve it so the error reappears.
+          if (currentText === mark.error.original) {
+            mark.resolved = false;
+            markStore.notify(filePath);
+          }
+          continue;
+        }
+
+        // Non-resolved mark: user edited the error word.
+        if (currentText !== mark.error.original) {
+          if (mark.error.corrected && currentText === mark.error.corrected) {
+            // User manually applied the suggested fix → resolve it so
+            // undo can revive the mark (same as clicking "应用").
+            mark.resolved = true;
+            plugin.errorBook.appendError(mark.error);
+            markStore.notify(filePath);
+          } else {
+            // User wrote something else → remove mark permanently.
+            toRemove.push(mark.error.id);
+            plugin.errorBook.appendError(mark.error);
+          }
+
           if (!plugin.settings.enabled) continue;
           const sentenceStart = mark.sentenceFrom;
           if (!pendingRechecks.has(sentenceStart)) {
@@ -125,12 +146,10 @@ export function createDecorationsExtension(
         }
       }
 
-      // Batch-remove after iteration to avoid mutating during loop
       for (const id of toRemove) {
         markStore.removeMark(filePath, id);
       }
 
-      // Batch-recheck: once per affected sentence
       for (const [, sentence] of pendingRechecks) {
         dispatcher.recheck(sentence, filePath);
       }

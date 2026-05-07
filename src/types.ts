@@ -22,8 +22,11 @@ export interface ErrorMark {
   error: ErrorItem;
   from: number;
   to: number;
-  sentenceFrom: number;  // Document position of the sentence start, mapped through changes
-  sentenceTo: number;    // Document position of the sentence end, mapped through changes
+  sentenceFrom: number;
+  sentenceTo: number;
+  /** When true, the mark is hidden — the user applied a fix. If the user
+   *  undoes (text reverts to original), validateMarks un-resolves it. */
+  resolved?: boolean;
 }
 
 export interface SentenceRange {
