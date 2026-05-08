@@ -1,24 +1,36 @@
 /* LangGhost Styles */
 
-/* Wave underlines */
+/* Wave underlines via SVG background-image */
 .langghost-grammar {
-  text-decoration: wavy underline red;
-  text-underline-offset: 3px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='M0 1.5 Q1.5 0 3 1.5 Q4.5 3 6 1.5' fill='none' stroke='%23e55' stroke-width='1'/></svg>");
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 6px 3px;
+  padding-bottom: 2px;
 }
 
 .langghost-spelling {
-  text-decoration: wavy underline blue;
-  text-underline-offset: 3px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='M0 1.5 Q1.5 0 3 1.5 Q4.5 3 6 1.5' fill='none' stroke='%2368f' stroke-width='1'/></svg>");
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 6px 3px;
+  padding-bottom: 2px;
 }
 
 .langghost-expression {
-  text-decoration: wavy underline #d4a017;
-  text-underline-offset: 3px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='M0 1.5 Q1.5 0 3 1.5 Q4.5 3 6 1.5' fill='none' stroke='%23c90' stroke-width='1'/></svg>");
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 6px 3px;
+  padding-bottom: 2px;
 }
 
 .langghost-translation {
-  text-decoration: wavy underline green;
-  text-underline-offset: 3px;
+  background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='M0 1.5 Q1.5 0 3 1.5 Q4.5 3 6 1.5' fill='none' stroke='%234a4' stroke-width='1'/></svg>");
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 6px 3px;
+  padding-bottom: 2px;
 }
 
 /* Tooltip */

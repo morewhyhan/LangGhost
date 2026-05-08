@@ -150,7 +150,31 @@ export class LangGhostSidebarView extends ItemView {
       return;
     }
 
-    const marks = this.markStore.getMarks(filePath);
+    let marks = this.markStore.getMarks(filePath);
+
+    // Validate marks against the live document — remove stale marks that
+    // slipped through (async persistence restore, race conditions, etc.)
+    const cm = this.getEditorForFile(filePath);
+    if (cm && marks.length > 0) {
+      const doc = cm.state.doc;
+      const staleIds: string[] = [];
+      marks = marks.filter(m => {
+        if (m.from >= doc.length || m.to > doc.length || m.from >= m.to) {
+          staleIds.push(m.error.id);
+          return false;
+        }
+        if (doc.sliceString(m.from, m.to) !== m.error.original) {
+          staleIds.push(m.error.id);
+          return false;
+        }
+        return true;
+      });
+      if (staleIds.length > 0) {
+        console.warn('LangGhost sidebar: removing', staleIds.length, 'stale marks for', filePath);
+        for (const id of staleIds) this.markStore.removeMark(filePath, id);
+      }
+    }
+
     if (marks.length > 0) {
       this.checkedFiles.add(filePath);
     }

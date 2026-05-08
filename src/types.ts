@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: LangGhostSettings = {
   apiEndpoint: 'https://api.deepseek.com/v1',
   model: 'deepseek-chat',
   errorBookPath: 'LangGhost/errors.md',
-  enabled: true,
+  enabled: false,
   autoScan: false,
   firstRun: true,
 };
