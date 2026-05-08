@@ -225,6 +225,14 @@ function findOriginalInSentence(sentence: string, original: string, context?: st
 
 function errorsToMarks(errors: ErrorItem[], sentence: SentenceRange): ErrorMark[] {
   return errors.map(err => {
+    // Skip if corrected is same as original (no actual fix)
+    if (err.corrected && err.corrected.toLowerCase() === err.original.toLowerCase()) {
+      return null;
+    }
+    // Skip if no corrected form and not a translation type
+    if (!err.corrected && err.type !== 'translation') {
+      return null;
+    }
     const idx = findOriginalInSentence(sentence.text, err.original, err.context);
     if (idx === -1) {
       console.warn('LangGhost errorsToMarks: could not find original in sentence:', err.original, 'in:', sentence.text);

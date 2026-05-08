@@ -69,6 +69,25 @@ export class Persistence {
       const idx = findBestMatch(docText, pe.error.original, pe.from);
       if (idx === -1) continue;
 
+      // Safety: if the corrected text already overlaps with where we found
+      // the original, the fix was applied in a previous session — skip.
+      // This handles cases where 'original' is a substring of 'corrected'
+      // (e.g. "apple" inside "an apple") and findBestMatch matched it there.
+      if (pe.error.corrected && pe.error.corrected !== pe.error.original) {
+        const cLen = pe.error.corrected.length;
+        const oLen = pe.error.original.length;
+        const searchStart = Math.max(0, idx - cLen + 1);
+        const searchEnd = Math.min(docText.length - cLen + 1, idx + oLen);
+        let alreadyFixed = false;
+        for (let s = searchStart; s < searchEnd; s++) {
+          if (docText.substring(s, s + cLen) === pe.error.corrected) {
+            alreadyFixed = true;
+            break;
+          }
+        }
+        if (alreadyFixed) continue;
+      }
+
       const sentOffset = pe.error.sentence.indexOf(pe.error.original);
       marks.push({
         error: pe.error,
@@ -101,6 +120,12 @@ export class Persistence {
 
     for (const [filePath, marks] of allMarks) {
       for (const mark of marks) {
+        // Don't persist resolved marks — they've been applied and the
+        // document text already contains the correction.  Restoring them
+        // would find 'original' as a substring of the corrected text,
+        // causing duplicate fixes (e.g. "apple" inside "an apple" →
+        // applying fix again produces "an an apple").
+        if (mark.resolved) continue;
         const start = Math.max(0, mark.from - 25);
         const end = start + 50;
         result.push({

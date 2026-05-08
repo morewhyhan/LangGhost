@@ -138,8 +138,6 @@ export default class LangGhostPlugin extends Plugin {
         if (mark) {
           const fixed = this.applyFix(view.file.path, mark.error.id);
           console.log('LangGhost: applyFix result=', fixed, 'id=', mark.error.id);
-          // Recheck sentence so remaining errors are re-evaluated
-          this.dispatcher.recheckAround(view.file.path, Math.max(0, mark.from - 1), cm.state.doc);
         } else {
           const msg = this.linter.isReady()
             ? 'LangGhost: no errors found'
@@ -201,16 +199,15 @@ export default class LangGhostPlugin extends Plugin {
     this.registerView(LangGhostSidebarView.VIEW_TYPE, (leaf) =>
       new LangGhostSidebarView(leaf, this.markStore, this.dispatcher, this)
     );
-    // Defer opening until workspace layout is ready
-    // Only auto-open on first run; after that let Obsidian handle workspace restoration
+    // Auto-open sidebar on startup if not already open
     this.app.workspace.onLayoutReady(() => {
+      if (!this.app.workspace.getLeavesOfType(LangGhostSidebarView.VIEW_TYPE).length) {
+        this.app.workspace.getRightLeaf(false).setViewState({
+          type: LangGhostSidebarView.VIEW_TYPE,
+          active: false,
+        });
+      }
       if (this.settings.firstRun) {
-        if (!this.app.workspace.getLeavesOfType(LangGhostSidebarView.VIEW_TYPE).length) {
-          this.app.workspace.getRightLeaf(false).setViewState({
-            type: LangGhostSidebarView.VIEW_TYPE,
-            active: false,
-          });
-        }
         this.settings.firstRun = false;
         this.saveSettings();
       }
@@ -232,9 +229,21 @@ export default class LangGhostPlugin extends Plugin {
             const docText = cm?.state?.doc?.toString() ?? '';
             if (docText) {
               this.persistence.restoreFile(filePath, docText).then((marks) => {
-                if (marks.length > 0) {
+                // Re-validate against CURRENT document — the async restore
+                // may complete after the user has already edited or cleared text.
+                const curDoc = cm?.state?.doc;
+                if (curDoc) {
+                  const validMarks = marks.filter(m => {
+                    if (m.from >= curDoc.length || m.to > curDoc.length) return false;
+                    return curDoc.sliceString(m.from, m.to) === m.error.original;
+                  });
+                  if (validMarks.length > 0) {
+                    this.markStore.addMarks(filePath, validMarks);
+                  }
+                } else if (marks.length > 0) {
                   this.markStore.addMarks(filePath, marks);
-                } else if (this.settings.autoScan && !autoScanned.has(filePath)) {
+                }
+                if (marks.length === 0 && this.settings.autoScan && !autoScanned.has(filePath)) {
                   // Auto-scan on first open (limit 10 sentences to avoid cost)
                   autoScanned.add(filePath);
                   this.dispatcher.scanFile(filePath, cm.state.doc, 10);
@@ -335,15 +344,22 @@ export default class LangGhostPlugin extends Plugin {
     for (const m of validMarks) {
       this.errorBook.appendError(m.error);
     }
-    // Recheck seamless: clearSentenceMarks skips resolved marks, so they
-    // survive the recheck and are revivable on undo.
-    this.dispatcher.recheckAroundSeamless(
-      filePath,
-      changes[changes.length - 1].from + changes[changes.length - 1].insert.length,
-      cm.state.doc,
-      []
-    );
     return true;
+  }
+
+  /** Activate/reveal the LangGhost sidebar. */
+  async activateSidebar(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(LangGhostSidebarView.VIEW_TYPE);
+    if (existing.length) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    await leaf.setViewState({
+      type: LangGhostSidebarView.VIEW_TYPE,
+      active: true,
+    });
+    this.app.workspace.revealLeaf(leaf);
   }
 
   /** Update status bar with error count for a file. */

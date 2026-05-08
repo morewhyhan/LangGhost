@@ -1,4 +1,4 @@
-import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate, type EditorView } from '@codemirror/view';
+import { ViewPlugin, Decoration, type DecorationSet, type ViewUpdate, type EditorView, type Range } from '@codemirror/view';
 import { type StateField } from '@codemirror/state';
 import { editorInfoField } from 'obsidian';
 import type { MarkStore } from './markStore';
@@ -63,12 +63,11 @@ export function createDecorationsExtension(
       }
     }
 
-    /** Check marks near the change region against the post-change document.
-     *  If the text at a mark's mapped position no longer matches the original,
-     *  the user edited it → remove the mark, record to error book, recheck.
-     *
-     *  Resolved marks: if the text now matches the original again (user undid
-     *  a fix), un-resolve the mark so the error reappears. */
+    /** Validate ALL marks against the post-change document.
+     *  Always checks text match (cheap) for every mark — catches stale marks
+     *  that slipped through mapPositions due to edge cases (changeKey collision,
+     *  file.path null, split-pane sync race, etc.).
+     *  Sentence rechecks (expensive AI) are still gated by nearChange. */
     private validateMarks(update: ViewUpdate) {
       const markStore = update.state.field(markStoreField);
       const info = update.state.field(editorInfoField);
@@ -90,11 +89,6 @@ export function createDecorationsExtension(
       const pendingRechecks: Map<number, SentenceRange> = new Map();
 
       for (const mark of allMarks) {
-        const nearChange = changedRanges.some(
-          r => mark.from <= r.to && mark.to >= r.from
-        );
-        if (!nearChange) continue;
-
         const from = Math.min(mark.from, doc.length);
         const to = Math.min(mark.to, doc.length);
         if (from >= to) {
@@ -113,7 +107,7 @@ export function createDecorationsExtension(
           continue;
         }
 
-        // Non-resolved mark: user edited the error word.
+        // Non-resolved mark: text no longer matches → stale or user edited it.
         if (currentText !== mark.error.original) {
           if (mark.error.corrected && currentText === mark.error.corrected) {
             // User manually applied the suggested fix → resolve it so
@@ -127,7 +121,16 @@ export function createDecorationsExtension(
             plugin.errorBook.appendError(mark.error);
           }
 
-          if (!plugin.settings.enabled) continue;
+          // Only recheck sentence for marks near the change (expensive AI call)
+          // AND only when user typed new content (not a fix application).
+          // This prevents recheck loops where AI keeps finding false positives.
+          const nearChange = changedRanges.some(
+            r => mark.from <= r.to && mark.to >= r.from
+          );
+          if (!nearChange || !plugin.settings.enabled) continue;
+          // Skip recheck if the current text matches the corrected form —
+          // that means the user applied a fix, not typed new content.
+          if (mark.error.corrected && currentText === mark.error.corrected) continue;
           const sentenceStart = mark.sentenceFrom;
           if (!pendingRechecks.has(sentenceStart)) {
             const sentenceEnd = Math.min(mark.sentenceTo, doc.length);
@@ -166,13 +169,46 @@ export function createDecorationsExtension(
       const marks = markStore.getMarks(filePath);
       if (marks.length === 0) return Decoration.none;
 
-      const decorations = marks.map(mark => {
-        const cls = CLASS_MAP[mark.error.type?.toLowerCase()] || 'langghost-grammar';
-        return Decoration.mark({
-          class: cls,
-        }).range(mark.from, mark.to);
+      // Validate marks against current document — catches stale marks from
+      // async persistence restore that slipped through mapPositions.
+      const doc = view.state.doc;
+      const staleIds: string[] = [];
+      const validMarks = marks.filter(m => {
+        if (m.from >= doc.length || m.to > doc.length || m.from >= m.to) {
+          staleIds.push(m.error.id);
+          return false;
+        }
+        if (doc.sliceString(m.from, m.to) !== m.error.original) {
+          staleIds.push(m.error.id);
+          return false;
+        }
+        return true;
       });
 
+      // Defer removal to avoid side effects during decoration build
+      if (staleIds.length > 0) {
+        const ms = markStore;
+        const fp = filePath;
+        setTimeout(() => {
+          for (const id of staleIds) ms.removeMark(fp, id);
+        }, 0);
+      }
+
+      if (validMarks.length === 0) return Decoration.none;
+
+      // Build decorations with try-catch per mark to prevent any crash
+      const decorations: Range<Decoration>[] = [];
+      for (const mark of validMarks) {
+        if (mark.from < 0 || mark.from >= mark.to || mark.to > doc.length) continue;
+        try {
+          const cls = CLASS_MAP[mark.error.type?.toLowerCase()] || 'langghost-grammar';
+          decorations.push(Decoration.mark({ class: cls }).range(mark.from, mark.to));
+        } catch (e) {
+          console.warn('LangGhost: skip invalid mark', mark.from, mark.to, mark.error.original);
+        }
+      }
+
+      if (decorations.length === 0) return Decoration.none;
       return Decoration.set(decorations, true);
     }
   }, {
