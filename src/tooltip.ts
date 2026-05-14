@@ -14,22 +14,6 @@ const BAR_COLORS: Record<string, string> = {
   grammar: '#e55', spelling: '#68f', expression: '#c90', translation: '#4a4',
 };
 
-/** Build the fully corrected sentence by applying all marks' fixes. */
-function buildCorrectedSentence(original: string, marks: ErrorMark[]): string {
-  const patches = marks.map(m => ({
-    pos: m.from - m.sentenceFrom,
-    len: m.error.original.length,
-    text: m.error.corrected,
-  }));
-  patches.sort((a, b) => b.pos - a.pos);
-  let result = original;
-  for (const p of patches) {
-    if (p.pos < 0 || p.pos + p.len > result.length) continue;
-    result = result.substring(0, p.pos) + p.text + result.substring(p.pos + p.len);
-  }
-  return result;
-}
-
 export function createTooltipExtension(
   markStoreField: StateField<MarkStore>,
   _dispatcherField: StateField<Dispatcher>,
@@ -46,8 +30,6 @@ export function createTooltipExtension(
       const mark = marks.find(m => pos >= m.from && pos < m.to);
       if (!mark) return null;
 
-      const sentenceMarks = marks.filter(m => m.sentenceFrom === mark.sentenceFrom);
-      const correctedSentence = buildCorrectedSentence(mark.error.sentence, sentenceMarks);
       const type = mark.error.type?.toLowerCase() || 'grammar';
       const barColor = BAR_COLORS[type] || BAR_COLORS.grammar;
 
@@ -101,33 +83,6 @@ export function createTooltipExtension(
           fix.appendChild(corrSpan);
           content.appendChild(fix);
 
-          // Alternatives
-          if (mark.error.alternatives && mark.error.alternatives.length > 0) {
-            const alt = document.createElement('div');
-            alt.className = 'langghost-alt';
-            alt.textContent = '或: ' + mark.error.alternatives.join(', ');
-            content.appendChild(alt);
-          }
-
-          // Sentence preview: original → corrected (only if there are changes)
-          if (correctedSentence !== mark.error.sentence) {
-            const preview = document.createElement('div');
-            preview.className = 'langghost-preview';
-            const originalLine = document.createElement('div');
-            originalLine.className = 'langghost-preview-original';
-            originalLine.textContent = mark.error.sentence;
-            const arrow = document.createElement('div');
-            arrow.className = 'langghost-preview-arrow';
-            arrow.textContent = '↓';
-            const correctedLine = document.createElement('div');
-            correctedLine.className = 'langghost-preview-corrected';
-            correctedLine.textContent = correctedSentence;
-            preview.appendChild(originalLine);
-            preview.appendChild(arrow);
-            preview.appendChild(correctedLine);
-            content.appendChild(preview);
-          }
-
           // Actions
           const actions = document.createElement('div');
           actions.className = 'langghost-actions';
@@ -140,22 +95,11 @@ export function createTooltipExtension(
           applyBtn.disabled = !hasCorrection;
           if (hasCorrection) {
             applyBtn.addEventListener('click', () => {
-              // Fade tooltip out immediately — CM6 will clean up the DOM
-              // on the next re-evaluation.
               dom.style.opacity = '0';
               dom.style.transition = 'opacity 80ms';
               plugin.applyFix(filePath, mark.error.id);
             });
           }
-
-          const applyAllBtn = document.createElement('button');
-          applyAllBtn.className = 'langghost-apply-all';
-          applyAllBtn.textContent = '应用整句';
-          applyAllBtn.addEventListener('click', () => {
-            dom.style.opacity = '0';
-            dom.style.transition = 'opacity 80ms';
-            plugin.applyAllInSentence(filePath, mark.sentenceFrom);
-          });
 
           const ignoreBtn = document.createElement('button');
           ignoreBtn.className = 'langghost-ignore';
@@ -167,7 +111,6 @@ export function createTooltipExtension(
           });
 
           actions.appendChild(applyBtn);
-          actions.appendChild(applyAllBtn);
           actions.appendChild(ignoreBtn);
           content.appendChild(actions);
 

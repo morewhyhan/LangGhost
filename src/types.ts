@@ -3,6 +3,9 @@ import { StateEffect } from '@codemirror/state';
 /** Dispatch this effect to force the decorations ViewPlugin to rebuild */
 export const markStoreChangedEffect = StateEffect.define<void>();
 
+/** Dispatch to briefly highlight a mark range for keyboard navigation */
+export const highlightErrorEffect = StateEffect.define<{ from: number; to: number } | null>();
+
 // LangGhost Type Definitions
 
 export interface ErrorItem {

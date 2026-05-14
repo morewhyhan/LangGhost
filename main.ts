@@ -1,7 +1,7 @@
 import { Notice, Plugin, MarkdownView } from 'obsidian';
 import { StateField, type Text } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { DEFAULT_SETTINGS, type LangGhostSettings, type ErrorMark, markStoreChangedEffect } from './src/types';
+import { DEFAULT_SETTINGS, type LangGhostSettings, type ErrorMark, markStoreChangedEffect, highlightErrorEffect } from './src/types';
 import { LangGhostSettingTab } from './src/settings';
 import { MarkStore } from './src/markStore';
 import { AIChecker } from './src/checker';
@@ -10,9 +10,10 @@ import { LocalLinter } from './src/linter';
 import { ErrorBook } from './src/errorBook';
 import { Persistence } from './src/persistence';
 import { createDetectorExtension } from './src/detector';
-import { createDecorationsExtension } from './src/decorations';
+import { createDecorationsExtension, createHighlightExtension } from './src/decorations';
 import { createTooltipExtension } from './src/tooltip';
 import { LangGhostSidebarView } from './src/sidebarView';
+import { OnboardingModal } from './src/onboarding';
 
 export default class LangGhostPlugin extends Plugin {
   settings: LangGhostSettings = DEFAULT_SETTINGS;
@@ -23,6 +24,7 @@ export default class LangGhostPlugin extends Plugin {
   dispatcher: Dispatcher;
   errorBook: ErrorBook;
   persistence: Persistence;
+  private aiCheckCount: number = 0;
 
   async onload() {
     await this.loadSettings();
@@ -30,14 +32,14 @@ export default class LangGhostPlugin extends Plugin {
     // Status bar
     this.statusBarEl = this.addStatusBarItem();
 
-    // Status update callback
+    // Status update callback — tracks AI check count for progress feedback
     const updateStatus = (msg: string) => {
-      // Preserve linter init error when other modules try to clear status
-      if (msg === '' && this.linter?.initError) {
-        this.statusBarEl.setText(this.linter.initError);
-      } else {
-        this.statusBarEl.setText(msg);
+      if (msg === 'AI checking...') {
+        this.aiCheckCount++;
+      } else if (msg === '' || msg.startsWith('Invalid') || msg.startsWith('Rate') || msg.startsWith('AI check') || msg.startsWith('Network')) {
+        this.aiCheckCount = Math.max(0, this.aiCheckCount - 1);
       }
+      this.renderStatusBar();
     };
 
     // Create core modules
@@ -107,6 +109,7 @@ export default class LangGhostPlugin extends Plugin {
         () => this.settings
       ),
       createDecorationsExtension(markStoreField, dispatcherField, pluginField),
+      createHighlightExtension(),
       createTooltipExtension(markStoreField, dispatcherField, pluginField),
     ]);
 
@@ -167,6 +170,45 @@ export default class LangGhostPlugin extends Plugin {
       },
     });
 
+    // Keyboard shortcut: navigate to next/previous error
+    this.addCommand({
+      id: 'next-error',
+      name: 'LangGhost: Next error',
+      hotkeys: [{ modifiers: ['Mod', 'Alt'], key: ']' }],
+      editorCallback: (_editor, view) => {
+        if (!view.file) return;
+        const cm = (view.editor as any).cm as EditorView;
+        if (!cm) return;
+        const pos = cm.state.selection.main.head;
+        const marks = this.markStore.getMarks(view.file.path);
+        const after = marks.filter(m => m.from > pos).sort((a, b) => a.from - b.from);
+        if (after.length > 0) {
+          this.navigateToMark(cm, after[0]);
+        } else {
+          new Notice('LangGhost: 没有更多错误');
+        }
+      },
+    });
+
+    this.addCommand({
+      id: 'prev-error',
+      name: 'LangGhost: Previous error',
+      hotkeys: [{ modifiers: ['Mod', 'Alt'], key: '[' }],
+      editorCallback: (_editor, view) => {
+        if (!view.file) return;
+        const cm = (view.editor as any).cm as EditorView;
+        if (!cm) return;
+        const pos = cm.state.selection.main.head;
+        const marks = this.markStore.getMarks(view.file.path);
+        const before = marks.filter(m => m.from < pos).sort((a, b) => b.from - a.from);
+        if (before.length > 0) {
+          this.navigateToMark(cm, before[0]);
+        } else {
+          new Notice('LangGhost: 没有更多错误');
+        }
+      },
+    });
+
     // Settings tab
     this.addSettingTab(new LangGhostSettingTab(this.app, this));
 
@@ -177,9 +219,7 @@ export default class LangGhostPlugin extends Plugin {
       callback: () => {
         this.settings.enabled = !this.settings.enabled;
         this.saveSettings();
-        this.statusBarEl.setText(
-          this.settings.enabled ? '' : 'LangGhost: off'
-        );
+        this.renderStatusBar();
         // Force decoration rebuild on all editors
         for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
           const view = leaf.view as MarkdownView;
@@ -210,6 +250,29 @@ export default class LangGhostPlugin extends Plugin {
       if (this.settings.firstRun) {
         this.settings.firstRun = false;
         this.saveSettings();
+        const modal = new OnboardingModal(
+          this.app,
+          () => {
+            // "Local only" path: enable the plugin
+            this.settings.enabled = true;
+            this.saveSettings();
+            this.renderStatusBar();
+            for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
+              const view = leaf.view as MarkdownView;
+              const cm = (view.editor as any).cm as EditorView;
+              if (cm) cm.dispatch({ effects: markStoreChangedEffect.of() });
+            }
+          },
+          () => {
+            // "AI" path: enable plugin + open settings
+            this.settings.enabled = true;
+            this.saveSettings();
+            this.renderStatusBar();
+            (this.app as any).setting.open();
+            (this.app as any).setting.openTabById('langghost');
+          }
+        );
+        modal.open();
       }
     });
 
@@ -362,16 +425,43 @@ export default class LangGhostPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
+  /** Navigate to a mark's position with brief highlight flash. */
+  private navigateToMark(cm: EditorView, mark: ErrorMark): void {
+    cm.dispatch({
+      selection: { anchor: mark.from },
+      scrollIntoView: true,
+      effects: highlightErrorEffect.of({ from: mark.from, to: mark.to }),
+    });
+    cm.focus();
+  }
+
   /** Update status bar with error count for a file. */
   updateStatusCount(filePath: string): void {
-    // Only update if filePath matches the active editor
-    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!activeView?.file || activeView.file.path !== filePath) return;
-    const count = this.markStore.getMarks(filePath).length;
-    if (count > 0) {
-      this.statusBarEl.setText(`LangGhost: ${count} error${count > 1 ? 's' : ''}`);
+    this.renderStatusBar();
+  }
+
+  /** Unified status bar rendering — checking state takes priority over count. */
+  private renderStatusBar(): void {
+    if (this.aiCheckCount > 0) {
+      this.statusBarEl.setText('LangGhost: 检查中...');
+      this.statusBarEl.classList.add('langghost-status-checking');
     } else {
-      this.statusBarEl.setText('');
+      this.statusBarEl.classList.remove('langghost-status-checking');
+      if (!this.settings.enabled) {
+        this.statusBarEl.setText('LangGhost: off');
+        return;
+      }
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (activeView?.file) {
+        const count = this.markStore.getMarks(activeView.file.path).length;
+        if (count > 0) {
+          this.statusBarEl.setText(`LangGhost: ${count} 个错误`);
+        } else {
+          this.statusBarEl.setText('');
+        }
+      } else {
+        this.statusBarEl.setText('');
+      }
     }
   }
 

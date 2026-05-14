@@ -30,6 +30,10 @@ export class LangGhostSidebarView extends ItemView {
   private checkedFiles: Set<string> = new Set();
   /** Error IDs seen in the last refresh, for fresh-item animation tracking. */
   private lastErrorIds: Set<string> = new Set();
+  /** Active type filter: null = all, or 'grammar' | 'spelling' | 'expression' | 'translation'. */
+  private activeFilter: string | null = null;
+  /** Reference to filter bar for show/hide. */
+  private filterBar: HTMLElement;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -72,6 +76,30 @@ export class LangGhostSidebarView extends ItemView {
     // Hint for first-time users
     this.hintEl = container.createDiv({ cls: 'langghost-sidebar-hint' });
     this.hintEl.textContent = '以 . ? ! 结尾自动触发检查';
+
+    // Type filter bar
+    this.filterBar = container.createDiv({ cls: 'langghost-filter-bar' });
+    const filterTypes = [
+      { key: null, label: '全部' },
+      { key: 'grammar', label: '语法' },
+      { key: 'spelling', label: '拼写' },
+      { key: 'expression', label: '表达' },
+      { key: 'translation', label: '翻译' },
+    ];
+    for (const ft of filterTypes) {
+      const chip = this.filterBar.createEl('button', {
+        cls: 'langghost-filter-chip' + (ft.key === this.activeFilter ? ' langghost-filter-active' : ''),
+        text: ft.label,
+      });
+      chip.addEventListener('click', () => {
+        this.activeFilter = ft.key;
+        this.filterBar.querySelectorAll('.langghost-filter-chip').forEach((el) => {
+          (el as HTMLElement).classList.remove('langghost-filter-active');
+        });
+        chip.classList.add('langghost-filter-active');
+        this.refresh();
+      });
+    }
 
     this.emptyEl = container.createDiv({ cls: 'langghost-sidebar-empty' });
     this.emptyEl.textContent = '没有发现错误';
@@ -152,6 +180,11 @@ export class LangGhostSidebarView extends ItemView {
 
     let marks = this.markStore.getMarks(filePath);
 
+    // Apply type filter
+    if (this.activeFilter) {
+      marks = marks.filter(m => m.error.type === this.activeFilter);
+    }
+
     // Validate marks against the live document — remove stale marks that
     // slipped through (async persistence restore, race conditions, etc.)
     const cm = this.getEditorForFile(filePath);
@@ -192,6 +225,7 @@ export class LangGhostSidebarView extends ItemView {
         this.hintEl.style.display = 'none';
       }
       this.scanBtn.style.display = 'block';
+      this.filterBar.style.display = 'none';
       return;
     }
 
@@ -209,6 +243,7 @@ export class LangGhostSidebarView extends ItemView {
     this.listEl.style.display = 'flex';
     this.listEl.empty();
     this.scanBtn.style.display = 'block';
+    this.filterBar.style.display = 'flex';
 
     for (const [sentenceFrom, groupMarks] of sortedGroups) {
       groupMarks.sort((a, b) => a.from - b.from);
@@ -229,7 +264,7 @@ export class LangGhostSidebarView extends ItemView {
 
     const toggle = document.createElement('span');
     toggle.className = 'langghost-sentence-toggle';
-    toggle.textContent = '▼';
+    toggle.textContent = '▶';
 
     const text = document.createElement('span');
     text.className = 'langghost-sentence-text';
@@ -238,7 +273,7 @@ export class LangGhostSidebarView extends ItemView {
 
     const count = document.createElement('span');
     count.className = 'langghost-sentence-count';
-    count.textContent = `${marks.length} errors`;
+    count.textContent = `${marks.length} 个`;
 
     const applyAll = document.createElement('button');
     applyAll.className = 'langghost-sentence-apply-all';
@@ -253,9 +288,10 @@ export class LangGhostSidebarView extends ItemView {
     header.appendChild(count);
     header.appendChild(applyAll);
 
-    // Error list
+    // Error list (default collapsed)
     const errorList = document.createElement('div');
     errorList.className = 'langghost-sentence-errors';
+    errorList.style.display = 'none';
 
     for (const mark of marks) {
       errorList.appendChild(this.createErrorItem(mark, filePath, newIds.has(mark.error.id)));

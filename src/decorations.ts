@@ -4,7 +4,7 @@ import { editorInfoField } from 'obsidian';
 import type { MarkStore } from './markStore';
 import type { Dispatcher } from './dispatcher';
 import type LangGhostPlugin from '../main';
-import { markStoreChangedEffect, type SentenceRange } from './types';
+import { markStoreChangedEffect, highlightErrorEffect, type SentenceRange } from './types';
 
 const CLASS_MAP: Record<string, string> = {
   grammar: 'langghost-grammar',
@@ -210,6 +210,39 @@ export function createDecorationsExtension(
 
       if (decorations.length === 0) return Decoration.none;
       return Decoration.set(decorations, true);
+    }
+  }, {
+    decorations: (v: any) => v.decorations,
+  });
+}
+
+/** Brief highlight flash for keyboard navigation between errors. */
+export function createHighlightExtension(): unknown {
+  return ViewPlugin.fromClass(class {
+    decorations: DecorationSet = Decoration.none;
+    timer: ReturnType<typeof setTimeout> | null = null;
+
+    update(update: ViewUpdate) {
+      for (const tr of update.transactions) {
+        for (const e of tr.effects) {
+          if (e.is(highlightErrorEffect) && e.value) {
+            const { from, to } = e.value;
+            const deco = Decoration.mark({
+              class: 'langghost-highlight'
+            }).range(from, to);
+            this.decorations = Decoration.set([deco]);
+            if (this.timer) clearTimeout(this.timer);
+            this.timer = setTimeout(() => {
+              this.decorations = Decoration.none;
+              update.view.dispatch();
+            }, 300);
+          }
+        }
+      }
+    }
+
+    destroy() {
+      if (this.timer) clearTimeout(this.timer);
     }
   }, {
     decorations: (v: any) => v.decorations,
