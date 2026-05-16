@@ -261,9 +261,9 @@ await runHarperTests();
 // SECTION 4: LLM (DeepSeek) tests (50 cases)
 // ══════════════════════════════════════════════════════════════════
 
-const API_KEY = 'REDACTED_API_KEY';
-const API_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
-const MODEL = 'deepseek-chat';
+const API_KEY = process.env.API_KEY || '';
+const API_ENDPOINT = process.env.API_ENDPOINT || 'https://api.deepseek.com/v1/chat/completions';
+const MODEL = process.env.MODEL || 'deepseek-chat';
 
 const SYSTEM_PROMPT = `You are an English writing assistant. Find English errors; translate any Chinese.
 
